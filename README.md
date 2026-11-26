@@ -20,7 +20,7 @@ Needs Node 20+. `npm link` gives you a global `battlemap` command.
 * **Toppers.** Each PR that touches a file raises a column on that roof. Its **width** is the share of the file the PR changes (at least 20%, so one-line edits still show), and two PRs on one file split the roof. Its **height** is lines changed (adds + dels) on one global scale, so any two toppers on the map compare by eye. Layers > Spires switches the height scale between square root (default), linear and log, and the width between "Share of file" and "Slim".
 * **Contested files** (two or more PRs) get a static amber frame around the roof.
 * **Focus a PR** (tap a card, flag or topper). Its columns split into hunks: red for deleted lines, green for added, heights proportional to lines. Every other PR turns to glass. Per-file `+n -n` floats over each topper and the left panel lists every file with a green/red bar. Moving dotted lines run from the flag to every file it touches.
-* **Flags** are PRs: ring colour = status, fill = author, gold pulse = needs you. **Fog of war** dims files nobody is working on.
+* **Flags** are PRs, and each fact has its own channel so they can be told apart from far away: the text is the PR number, ring colour = status, fill = author, the corner emblem (shape and hue) = epic, gold pulse = needs you. Every PR in one epic wears the same emblem. **Fog of war** dims files nobody is working on.
 * **Alerts** (flag icon) are drift between PRs and Jira: ticket Done but PR open, ticket To Do but PR up for review, ticket In Review with no PR, PR with no ticket key, ticket key that Jira does not know, and files two PRs fight over.
 * **KEY** (corner button) explains every shape and colour.
 
@@ -94,11 +94,12 @@ bin/battlemap.js        CLI
 server/                 config, Jira client + mock, snapshot join and insights, local repo scan
 web/layout.js           deterministic treemap            (pure, tested)
 web/spires.js           spire + hunk geometry plan       (pure, tested)
+web/sigil.js            flag number, author colour, epic emblem (pure, tested)
 web/scene.js            Three.js: instanced meshes, camera, overlay
 web/main.js             panels, settings, Jira actions
 ```
 
-`npm test` runs 27 tests (Jira client against the mock, server and security, layout and spire maths, a scene wiring smoke test). `npm run e2e` drives the real UI in Chrome against the mock (needs Playwright).
+`npm test` runs the suite (Jira client against the mock, server and security, layout and spire maths, flag sigils, a scene wiring smoke test). `npm run e2e` drives the real UI in Chrome against the mock (needs Playwright).
 
 ## Security notes
 

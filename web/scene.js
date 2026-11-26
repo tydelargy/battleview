@@ -6,7 +6,7 @@ import { buildLayout, WORLD } from './layout.js';
 import { planSpires, DIFF_COLORS } from './spires.js';
 
 const CX = WORLD.w / 2, CY = WORLD.h / 2;
-const FLAG_W = { collapsed: 34, expanded: 190 }, FLAG_H = 34;
+const FLAG_W = { collapsed: 78, expanded: 214 }, FLAG_H = 34;
 const SVGNS = 'http://www.w3.org/2000/svg';
 const ease = (t) => 1 - Math.pow(1 - t, 3);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _v = new THREE.Vector3();

@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { SCALES, TOPPERS, scaleTicks, DIFF_COLORS, MIN_COVER } from './spires.js';
+import { authorColor, epicEmblem, flagLabel, EMBLEMS } from './sigil.js';
 
 const STATUS = {
   review_requested: { label: 'REVIEW', color: '#5ab0ff', glyph: '?' },
@@ -31,7 +32,6 @@ function fill(el, ...kids) {
   const walk = (k) => { if (Array.isArray(k)) k.forEach(walk); else if (k != null && k !== false) out.push(k.nodeType ? k : document.createTextNode(String(k))); };
   kids.forEach(walk); el.replaceChildren(...out);
 }
-const authorColor = (a) => { let x = 0; for (const c of a) x = (x * 31 + c.charCodeAt(0)) >>> 0; return `hsl(${x % 360} 60% 70%)`; };
 const initials = (a) => (a.replace(/[^A-Za-z0-9 ._-]/g, '').split(/[ ._-]+/).filter(Boolean).map((s) => s[0]).join('').slice(0, 2) || a.slice(0, 2)).toUpperCase();
 
 const state = { snap: null, sel: null, needsOnly: false, epic: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null };
@@ -53,7 +53,7 @@ async function startScene() {
 }
 
 function makeFlag(pr) {
-  const el = h('div', { class: 'flag', role: 'button', tabindex: 0 }, h('span', { class: 'av' }), h('span', { class: 'tx' }), h('span', { class: 'bd' }));
+  const el = h('div', { class: 'flag', role: 'button', tabindex: 0 }, h('span', { class: 'av' }), h('span', { class: 'num' }), h('span', { class: 'tx' }), h('span', { class: 'bd' }), h('span', { class: 'em', hidden: true }));
   el.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.click(); });
   updateFlag(el, pr); return el;
 }
@@ -61,8 +61,12 @@ function updateFlag(el, pr) {
   const s = STATUS[pr.status];
   el.style.setProperty('--st', s.color); el.style.setProperty('--au', authorColor(pr.author));
   el.classList.toggle('needs', !!pr.needs);
-  el.setAttribute('aria-label', `${pr.ticketKey || pr.id} ${pr.title}, ${s.label}`);
+  const em = epicEmblem(pr.epic), emEl = el.querySelector('.em');
+  emEl.hidden = !em; if (em) { emEl.dataset.shape = em.shape; emEl.style.setProperty('--eh', em.hue); }
+  el.setAttribute('aria-label', `${flagLabel(pr)} ${pr.ticketKey || ''} ${pr.title}, ${s.label}${pr.epic ? ', epic ' + pr.epic : ''}`);
+  el.title = `${flagLabel(pr)} ${pr.title}\n@${pr.author}${pr.epic ? ' · ' + pr.epic : ''}`;
   el.querySelector('.av').textContent = initials(pr.author);
+  el.querySelector('.num').textContent = flagLabel(pr);
   const tx = el.querySelector('.tx'); tx.replaceChildren(pr.ticketKey || pr.id, h('em', null, pr.title.replace(pr.ticketKey || '', '').trim()));
   el.querySelector('.bd').textContent = s.glyph;
 }
@@ -266,7 +270,7 @@ function openKey() {
       h('h3', null, 'FOCUSED PR'),
       h('ul', null, sw(DIFF_COLORS.add, 'Added lines, one block per hunk'), sw(DIFF_COLORS.del, 'Deleted lines, one block per hunk (slightly narrower)'), h('li', null, 'Block heights are proportional to line counts. Other PRs turn to glass.'), h('li', null, 'Moving dotted lines run from the flag to every file the PR touches.')),
       h('h3', null, 'FLAGS AND MARKERS'),
-      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status.'), h('li', null, 'Gold pulse around a flag = needs you.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), h('li', null, 'Fog of war dims files nobody is working on.')),
+      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status, the number is the PR number.'), h('li', null, 'Emblem on the flag corner = epic. The shape and hue come from the epic name, so every PR in one epic wears the same emblem. No emblem means no epic:'), h('ul', { class: 'sw2 emb' }, EMBLEMS.map((shape) => h('li', null, h('span', { class: 'em', 'data-shape': shape, style: '--eh:200' })))), h('li', null, 'Gold pulse around a flag = needs you.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), h('li', null, 'Fog of war dims files nobody is working on.')),
       h('h3', null, 'ALERTS (flag icon, top right)'),
       h('ul', null, h('li', null, 'Places where Jira and the PRs disagree: ticket Done but PR open, ticket To Do but PR up, ticket in review with no PR, PR with no ticket, unknown ticket key.'))));
 }
