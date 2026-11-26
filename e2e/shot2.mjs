@@ -4,6 +4,7 @@
 // Steps run in order:
 //   click:<selector>   wait:<ms>   view:<2d|iso|3d>   file:<path> (fly to a file)   eval:<js>
 //   feed:<sample|sample-without-#id>   post the sample PRs as a real feed (switches the map to opt-in tracking)
+//   change:<#id>:<push|ci|green|re>    then something happens to a PR in that feed: new commits, CI goes red, CI recovers, re-review requested
 //   rule:<author|path>:<value>   pick:<ref>   shot:<name>   info
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -24,8 +25,10 @@ const README = ['shot:overview', 'view:3d', 'wait:2500', 'shot:3d', 'view:iso', 
   'click:#layersBtn', 'click:#l-buildings button:has-text("Crates")', 'click:#layersBtn', 'wait:800', 'eval:window.battlemap.selectPR(null)', 'wait:2500', toStart,
   'click:#filterBtn', 'wait:600', 'shot:filters', 'click:#filterBtn', 'wait:300',
   'feed:sample', 'rule:author:kofi', 'rule:path:packages/core/domain/', 'pick:#2279', 'feed:sample-without-#2284', 'wait:2500', toStart, 'wait:300', 'shot:tracking',
-  'click:#trackBtn', 'wait:700', 'shot:track-dialog'];
+  'click:#trackBtn', 'wait:700', 'shot:track-dialog', 'click:.mhead .btn', 'wait:300',
+  'change:#2291:push', 'change:#2279:re', 'change:#2305:ci', 'change:#2311:push', 'change:#2302:green', 'wait:4500', 'click:#bellBtn', 'wait:900', 'shot:notifications'];
 const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'X-Battlemap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+let current = [];   // the PRs as last fed, so `change` can alter one and feed them again
 const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 try {
   const page = await browser.newPage({ viewport: { width: 1360, height: 840 } });
@@ -39,7 +42,12 @@ try {
     else if (name === 'file') await page.evaluate((p) => window.battlemap.state.scene.flyToFile(p), a.join(':'));
     else if (name === 'view') await page.evaluate((v) => window.battlemap.state.scene.setView(v), a[0]);
     else if (name === 'eval') await page.evaluate(a.join(':'));
-    else if (name === 'feed') { const drop = a.join(':').startsWith('sample-without-') ? a.join(':').slice('sample-without-'.length) : null; await post('/api/prs', { prs: samplePRs().filter((p) => p.id !== drop) }); await page.waitForTimeout(800); }
+    else if (name === 'change') {
+      const [id, what] = [a[0], a[1]], p = current.find((x) => x.id === id);
+      if (what === 'push') p.files[0].add += 7; else if (what === 'ci') p.status = 'ci_failing'; else if (what === 'green') p.status = 'review_requested'; else if (what === 're') p.status = 're_review'; else throw new Error(`unknown change ${what}`);
+      await post('/api/prs', { prs: current }); await page.waitForTimeout(500);
+    }
+    else if (name === 'feed') { const drop = a.join(':').startsWith('sample-without-') ? a.join(':').slice('sample-without-'.length) : null; current = samplePRs().filter((p) => p.id !== drop); await post('/api/prs', { prs: current }); await page.waitForTimeout(800); }
     else if (name === 'rule') { await post('/api/watch/rule', { type: a[0], value: a.slice(1).join(':') }); await page.waitForTimeout(500); }
     else if (name === 'pick') { await post('/api/watch/pick', { ref: a.join(':') }); await page.waitForTimeout(500); }
     else if (name === 'shot') { await page.screenshot({ path: path.join(out, `${a[0]}.png`) }); console.log('wrote', path.join(out, `${a[0]}.png`)); }

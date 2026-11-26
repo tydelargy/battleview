@@ -106,6 +106,7 @@ server/watch.js         what is tracked: picks, author and path rules, ended PRs
 bin/battlemap-sync.js   CLI: write the PR feed from GitHub / GitHub Enterprise
 server/providers/       code-host adapters for the sync (github.js)
 server/feedwatch.js     reload the feed file when it changes, even when replaced atomically
+server/notify.js        notifications and policy: what happened to a tracked PR, what you want to hear (pure detection, tested)
 deploy/                 systemd units, an installer and a crontab line
 web/layout.js           deterministic treemap            (pure, tested)
 web/spires.js           spire + hunk geometry plan       (pure, tested)
@@ -140,6 +141,26 @@ The **FILTER** chip opens a panel (or press `/` to jump straight to the search b
 Each card shows how old the PR is (`3d`, `2w`) next to the author, and clicking `@author` in a PR's panel shows only that author. Your choices are remembered between visits.
 
 **Raise flags by age** (Layers menu) lifts old PRs on taller poles, so the ones that have been open longest stand out on the map; it grows with the square root of the age, so a week and a month both read.
+
+## Notifications and alerts
+
+![The notifications panel: new commits, a re-review request, red CI and a recovery](docs/screenshots/notifications.png)
+
+The **bell** collects what happens to the PRs you track, so you do not have to watch the map. Three kinds, as you would want them:
+
+* **New commits**: the PR's head commit changed (with `battlemap-sync` that is the commit sha; without one, its files or their sizes changed).
+* **Re-review requests**: someone who already reviewed was asked to look again.
+* **CI status**: CI went red, or recovered.
+
+Each shows what happened, to which PR and when; click one to jump to the PR. A badge counts what you have not looked at yet, and a toast tells you when something arrives while the page is open. **Clear** one, or **Clear all**.
+
+Notifications are worked out on the server by comparing each tracked PR with how it was last time, so they keep arriving while the browser is closed, and a change that happened while the server was down is announced when it starts. A PR seen for the first time, or a restart where nothing changed, announces nothing.
+
+**You decide what you hear about.** The three switches at the top of the panel are a global policy: they apply to everything, your own PRs included. To quieten one PR, open it and use its notification switches (mute it entirely, or just one kind). Your own PRs have no per-PR switches: they always notify, so a stale mute can never hide news about your own work.
+
+**Alerts** (the flag icon: ticket Done but PR open, PR with no ticket, and the rest) can be silenced one at a time with the ✕, or all at once. Silenced alerts move to a list you can reopen to restore them. That is the way to stop seeing, say, "no ticket key" on a PR that will never have one.
+
+Notifications, mutes and silenced alerts are saved next to the config as `config.notify.json` (mode 0600), except under `--mock-jira`. Desktop (system) notifications are not part of this; it is in-app only.
 
 ## Running it for real
 

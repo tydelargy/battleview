@@ -61,7 +61,7 @@ export function buildSnapshot({ files, prs, ended = [], jira, cfg }) {
   const endedOut = ended.map((p) => ({ ...join(p), ended: true }));   // shown as cards, kept out of the drift checks
 
   const insights = [];
-  const add = (kind, severity, title, detail, extra = {}) => insights.push({ id: `${kind}:${extra.prIds?.[0] || extra.keys?.[0] || insights.length}`, kind, severity, title, detail, prIds: [], keys: [], ...extra });
+  const add = (kind, severity, title, detail, extra = {}) => insights.push({ id: `${kind}|${[...(extra.prIds || []), ...(extra.keys || []), ...(extra.files || [])].join(',')}`, kind, severity, title, detail, prIds: [], keys: [], ...extra });
   const prByKey = new Map();
   for (const p of outPRs) if (p.ticketKey) { (prByKey.get(p.ticketKey) || prByKey.set(p.ticketKey, []).get(p.ticketKey)).push(p); }
 

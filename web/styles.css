@@ -159,7 +159,7 @@ pre.code{background:#0a0f16;border:1px solid var(--line);border-radius:6px;paddi
 @media (max-width:640px){
   .mbody{grid-template-columns:1fr;grid-template-rows:auto 1fr}.mnav{flex-direction:row;border-right:0;border-bottom:1px solid var(--line)}
   .two{grid-template-columns:1fr}
-  #focus{top:104px;max-height:calc(100% - 104px - 190px)}
+  #focus{top:134px;max-height:calc(100% - 134px - 190px)}   /* the header wraps to two rows on a phone (counters, then the icon buttons) and is about 126px tall */
   #legend{display:none}
   .jt{display:none}
 }
@@ -244,3 +244,25 @@ pre.code{background:#0a0f16;border:1px solid var(--line);border-radius:6px;paddi
 .linkish{background:none;border:0;padding:0;color:var(--info);font:inherit;cursor:pointer;text-decoration:underline}
 .empty .btn{margin-left:6px}
 @media (max-width:640px){#filters{top:140px;max-height:calc(100% - 140px - 190px)}}
+
+/* Notifications drawer, per-alert silence controls */
+#notifs{position:absolute;right:0;top:0;bottom:0;width:min(380px,100%);background:var(--panel);border-left:1px solid var(--line);z-index:6;padding:max(14px,env(safe-area-inset-top)) 14px 14px;overflow:auto}
+#notifs[hidden]{display:none}
+#notifs h2,#alerts h2{font:700 13px var(--display);letter-spacing:.12em;margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.hbtns{display:flex;gap:6px}
+#notifs .blk{margin-bottom:12px}
+.nt{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:center;padding:8px 6px;border-bottom:1px solid var(--line)}
+.nt.new{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.nt-kind{grid-row:1;font:600 9px var(--display);letter-spacing:.08em;color:#0a0e13;background:var(--c,var(--dim));border-radius:3px;padding:2px 6px;white-space:nowrap}
+.nt-text{grid-column:2;grid-row:1;background:none;border:0;padding:0;text-align:left;color:var(--text);font:inherit;font-size:12px;line-height:1.4;cursor:pointer}
+.nt-text:disabled{color:var(--dim);cursor:default}
+.nt-time{grid-column:2;grid-row:2;color:var(--dim);font-size:10.5px}
+.nt-x,.sil{grid-column:3;grid-row:1 / span 2;align-self:start;background:none;border:1px solid var(--line);border-radius:5px;color:var(--dim);cursor:pointer;width:26px;height:26px;font-size:12px}
+.nt-x:hover,.sil:hover,.nt-x:focus-visible,.sil:focus-visible{color:var(--text);border-color:var(--text)}
+.alrow{display:flex;gap:6px;align-items:stretch;margin-bottom:8px}
+.alrow .al{flex:1;min-width:0;margin-bottom:0}
+.alrow .sil{align-self:stretch;height:auto}
+.alrow.silenced .al{opacity:.6}
+.alrow .restore{align-self:center}
+#al-toggle-silenced{margin:4px 0 10px}
+.tgl+.tgl{margin-top:4px}

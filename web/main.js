@@ -38,7 +38,7 @@ function fill(el, ...kids) {
 }
 const initials = (a) => (a.replace(/[^A-Za-z0-9 ._-]/g, '').split(/[ ._-]+/).filter(Boolean).map((s) => s[0]).join('').slice(0, 2) || a.slice(0, 2)).toUpperCase();
 
-const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, wmarks: ls.get('wmarks', true), bstyle: normaliseStyle(ls.get('bstyle', null)) };
+const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, knownNotifs: null, notifBaseline: null, showSilenced: false, wmarks: ls.get('wmarks', true), bstyle: normaliseStyle(ls.get('bstyle', null)) };
 
 /* ---------- scene (optional: the UI still works if WebGL or three is unavailable) ---------- */
 async function startScene() {
@@ -82,6 +82,9 @@ async function refresh() {
   state.snap = snap;
   const open = snap.prs.filter((p) => !p.ended), fresh = state.known ? open.filter((p) => !state.known.has(p.id) && viaRulesOnly(p)) : [];
   state.known = new Set(open.map((p) => p.id));
+  const nIds = new Set(snap.notifications.inbox.map((e) => e.id)), freshN = state.knownNotifs ? snap.notifications.inbox.filter((e) => !state.knownNotifs.has(e.id)) : [];
+  state.knownNotifs = nIds;
+  if (freshN.length && $('notifs').hidden) toast(freshN.length === 1 ? freshN[0].text : `${freshN.length} new notifications. Latest: ${freshN[0].text}`);
   if (state.filters.epic && !snap.epics.includes(state.filters.epic)) { state.filters = { ...state.filters, epic: null }; ls.set('filters', state.filters); }
   if (fresh.length) toast(`${fresh.length} new PR${fresh.length > 1 ? 's' : ''} tracked by your rules: ${fresh.slice(0, 3).map((p) => p.number != null ? '#' + p.number : p.id).join(', ')}${fresh.length > 3 ? '…' : ''}`);
   if (state.sel && !snap.prs.some((p) => p.id === state.sel)) state.sel = null;
@@ -116,7 +119,7 @@ function connectEvents() {
 }
 
 /* ---------- rendering ---------- */
-function renderAll() { renderHeader(); renderChips(); renderCards(); renderFocus(); renderAlerts(); renderLayers(); }
+function renderAll() { renderHeader(); renderChips(); renderCards(); renderFocus(); renderAlerts(); renderNotifs(); renderLayers(); }
 
 function renderHeader() {
   const s = state.snap;
@@ -128,6 +131,7 @@ function renderHeader() {
   dot.className = 'dot' + (!j.configured ? '' : j.error ? (j.ok ? ' warn' : ' bad') : j.ok ? ' ok' : ' warn');
   txt.textContent = !j.configured ? 'Connect Jira' : j.error ? (j.ok ? 'Jira stale' : 'Jira error') : j.ok ? (j.sprint?.name || 'Jira') : 'Jira…';
   $('jiraPill').title = !j.configured ? 'Jira is not configured' : j.error ? `${j.error}${j.hint ? ' — ' + j.hint : ''}` : `Connected to ${j.baseUrl} as ${j.user?.name || '?'} · ${j.ticketCount} tickets`;
+  const un = s.notifications.unread, bc = $('bellCount'); bc.hidden = !un; bc.textContent = un > 99 ? '99+' : un;
   const warns = s.insights.filter((i) => i.severity === 'warn').length, b = $('alertCount');
   b.hidden = !s.insights.length; b.textContent = warns || s.insights.length; b.style.background = warns ? 'var(--warn)' : 'var(--info)';
 }
@@ -249,16 +253,67 @@ function renderFocus() {
     h('div', { class: 'blk' }, h('h3', null, 'JIRA'), ticket),
     actions,
     pr.ended ? null : trackingBlock(pr),
+    notifyBlock(pr),
     pr.url ? h('div', { class: 'blk' }, h('a', { href: pr.url }, 'Open pull request')) : null);
   const cm = document.getElementById('cmt'); if (cm && draft) { cm.value = draft; if (hadFocus) cm.focus(); }
 }
 
 function renderAlerts() {
   const s = state.snap, box = $('alerts'); if (box.hidden) return;
+  const go = (i) => { box.hidden = true; if (i.prIds[0]) selectPR(i.prIds[0]); else if (i.files?.[0]) state.scene?.flyToFile(i.files[0]); };
+  const silence = (ids) => api.send('POST', '/api/alerts/silence', { ids }).then(refresh);
+  const restore = (ids) => api.send('POST', '/api/alerts/restore', { ids }).then(refresh);
+  const live = s.insights, sil = s.silenced || [];
   fill(box,
-    h('h2', null, `ALERTS (${s.insights.length})`, h('button', { class: 'btn', onclick: () => { box.hidden = true; } }, 'CLOSE')),
-    !s.insights.length ? h('p', { class: 'sub' }, s.jira.ok ? 'PRs and tickets agree. Nothing to fix.' : 'Connect Jira to compare tickets with PRs.') : null,
-    ...s.insights.map((i) => h('button', { class: `al ${i.severity}`, onclick: () => { box.hidden = true; if (i.prIds[0]) selectPR(i.prIds[0]); else if (i.files?.[0]) state.scene?.flyToFile(i.files[0]); } }, h('b', null, i.title), h('span', null, i.detail))));
+    h('h2', null, `ALERTS (${live.length})`, h('span', { class: 'hbtns' }, live.length ? h('button', { class: 'btn', id: 'al-silence-all', title: 'Silence every alert shown. They stay in the silenced list until restored', onclick: () => silence(live.map((i) => i.id)) }, 'SILENCE ALL') : null, h('button', { class: 'btn', id: 'al-close', onclick: () => { box.hidden = true; } }, 'CLOSE'))),
+    !live.length ? h('p', { class: 'sub' }, sil.length ? 'Every alert is silenced.' : s.jira.ok ? 'PRs and tickets agree. Nothing to fix.' : 'Connect Jira to compare tickets with PRs.') : null,
+    live.map((i) => h('div', { class: 'alrow' }, h('button', { class: `al ${i.severity}`, onclick: () => go(i) }, h('b', null, i.title), h('span', null, i.detail)),
+      h('button', { class: 'sil', 'aria-label': `Silence: ${i.title}`, title: 'Silence this alert', onclick: () => silence([i.id]) }, '✕'))),
+    sil.length || state.showSilenced ? h('button', { class: 'btn', id: 'al-toggle-silenced', 'aria-expanded': String(state.showSilenced), onclick: () => { state.showSilenced = !state.showSilenced; renderAlerts(); } }, `${state.showSilenced ? 'HIDE' : 'SHOW'} SILENCED (${sil.length})`) : null,
+    state.showSilenced ? sil.map((i) => h('div', { class: 'alrow silenced' }, h('div', { class: `al ${i.severity}` }, h('b', null, i.title), h('span', null, i.detail)),
+      h('button', { class: 'restore btn', 'aria-label': `Restore: ${i.title}`, onclick: () => restore([i.id]) }, 'RESTORE'))) : null);
+}
+
+/* ---------- notifications ---------- */
+const NT_KIND = { pushed: ['PUSH', 'var(--info)'], re_review: ['RE-REVIEW', '#b794ff'], ci_failed: ['CI RED', 'var(--del)'], ci_passed: ['CI OK', 'var(--add)'] };
+const NT_POLICY = [['pushed', 'New commits'], ['re_review', 'Re-review requests'], ['ci', 'CI status (red and recovered)']];
+function toggleNotifs(force) {
+  const box = $('notifs'), open = force ?? box.hidden;
+  if (open) { $('alerts').hidden = true; state.notifBaseline = state.snap.notifications.lastSeen; }
+  box.hidden = !open;
+  if (open) renderNotifs();
+}
+function renderNotifs() {
+  const box = $('notifs'); if (box.hidden) return;
+  const n = state.snap.notifications, base = state.notifBaseline;
+  if (n.unread) api.send('POST', '/api/notify/seen');      // looking at the list counts as seeing what is in it, including what arrives while it is open
+  const clear = (id) => api.send('POST', '/api/notify/clear', id ? { id } : {}).then(refresh);
+  const setPolicy = (kind, enabled) => api.send('PUT', '/api/notify/policy', { kind, enabled }).then(refresh);
+  fill(box,
+    h('h2', null, `NOTIFICATIONS (${n.total})`, h('span', { class: 'hbtns' }, n.total ? h('button', { class: 'btn', id: 'nt-clear-all', onclick: () => clear() }, 'CLEAR ALL') : null, h('button', { class: 'btn', id: 'nt-close', onclick: () => toggleNotifs(false) }, 'CLOSE'))),
+    h('div', { class: 'blk' }, h('h3', null, 'TELL ME ABOUT'),
+      NT_POLICY.map(([k, label]) => h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id: `np-${k}`, checked: n.policy.global[k], onchange: (e) => setPolicy(k, e.target.checked) }), label)),
+      h('small', { class: 'sub' }, 'These switches apply to every PR, yours included. To mute one PR, open it and use its notification switches.')),
+    !n.inbox.length ? h('p', { class: 'sub nt-empty' }, 'No notifications yet. New commits, re-review requests and CI changes on the PRs you track will show up here.') : null,
+    n.inbox.map((e) => {
+      const [label, color] = NT_KIND[e.event] || [e.kind.toUpperCase(), 'var(--dim)'];
+      const pr = state.snap.prs.find((p) => p.id === e.prId);
+      return h('div', { class: 'nt' + (!base || e.ts > base ? ' new' : ''), 'data-id': e.id },
+        h('span', { class: 'nt-kind', style: `--c:${color}` }, label),
+        h('button', { class: 'nt-text', title: pr ? 'Show this PR' : 'This PR is no longer tracked', disabled: !pr, onclick: () => { toggleNotifs(false); selectPR(e.prId); } }, e.text),
+        h('span', { class: 'nt-time' }, ago(e.ts)),
+        h('button', { class: 'nt-x', 'aria-label': 'Clear this notification', title: 'Clear', onclick: () => clear(e.id) }, '✕'));
+    }));
+}
+/** Per-PR switches in the PR panel. Your own PRs have none: they always notify, and only the global policy can quieten them. */
+function notifyBlock(pr) {
+  if (pr.ended) return null;
+  if (pr.mine) return h('div', { class: 'blk' }, h('h3', null, 'NOTIFICATIONS'), h('p', { class: 'sub', id: 'npr-mine' }, 'Your own PRs always notify. To quieten a kind everywhere, use the switches in the bell panel.'));
+  const o = state.snap.notifications.policy.perPR[pr.id] || {}, set = (kind, on) => api.send('PUT', '/api/notify/pr', { id: pr.id, kind, enabled: on ? null : false }).then(refresh);
+  const row = (kind, label) => h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id: `npr-${kind}`, checked: o.all !== false && o[kind] !== false, disabled: o.all === false, onchange: (e) => set(kind, e.target.checked) }), label);
+  return h('div', { class: 'blk' }, h('h3', null, 'NOTIFICATIONS'),
+    h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id: 'npr-all', checked: o.all !== false, onchange: (e) => set('all', e.target.checked) }), 'Tell me about this PR'),
+    row('pushed', 'New commits'), row('re_review', 'Re-review requests'), row('ci', 'CI status'));
 }
 
 /* ---------- layers (view + spire options) ---------- */
@@ -622,7 +677,8 @@ function showFileBar(path) {
 }
 
 /* ---------- wiring ---------- */
-$('alertsBtn').onclick = () => { const a = $('alerts'); a.hidden = !a.hidden; renderAlerts(); };
+$('alertsBtn').onclick = () => { const a = $('alerts'); if (a.hidden) toggleNotifs(false); a.hidden = !a.hidden; renderAlerts(); };
+$('bellBtn').onclick = () => toggleNotifs();
 $('jiraPill').onclick = () => openSettings('jira');
 $('layersBtn').onclick = (e) => { e.stopPropagation(); toggleLayers(); };
 $('keyBtn').onclick = openKey;
@@ -635,7 +691,7 @@ $('settingsBtn').onclick = () => openSettings('jira');
 addEventListener('keydown', (e) => {
   if (e.key === '/' && modal.hidden && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) { e.preventDefault(); toggleFilters(true); $('f-q')?.focus(); return; }
   if (e.key !== 'Escape') return;
-  if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('filters').hidden) toggleFilters(false); else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.sel) selectPR(null);
+  if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('filters').hidden) toggleFilters(false); else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('notifs').hidden) toggleNotifs(false); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.sel) selectPR(null);
 });
 window.battlemap = { state, selectPR, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
 

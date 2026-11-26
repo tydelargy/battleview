@@ -6,6 +6,7 @@ import { ConfigStore, redact, normaliseJiraPatch } from './config.js';
 import { createJiraClient, syncJira, JiraError } from './jira/client.js';
 import { buildSnapshot, normalisePRs, extractKey } from './snapshot.js';
 import { WatchStore, classify, reconcileEnded, matchPath, watchedFiles } from './watch.js';
+import { NotifyStore, eventsFor } from './notify.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -22,10 +23,11 @@ function findThree() {
   return null;
 }
 
-export function createApp({ store = new ConfigStore(), watch, files = [], prs = [], sampleMode = false, log = () => {} } = {}) {
+export function createApp({ store = new ConfigStore(), watch, notify, files = [], prs = [], sampleMode = false, log = () => {} } = {}) {
   const threeDir = findThree();
   // Tracking choices sit next to the config. Mock Jira runs never write to disk, and neither do their picks.
   watch = watch || new WatchStore({ file: store.file.replace(/(\.json)?$/, '.watch.json'), persist: store.persist && !store.runtimeOverride });
+  notify = notify || new NotifyStore({ file: store.file.replace(/(\.json)?$/, '.notify.json'), persist: store.persist && !store.runtimeOverride });
   const app = {
     store, files, sampleMode, problems: [], prs: [], jira: null, jiraError: null,
     sse: new Set(), version: 0, timer: null, server: null,
@@ -43,6 +45,9 @@ export function createApp({ store = new ConfigStore(), watch, files = [], prs = 
     const ended = reconcileEnded({ prevLive: app.view.live, feed: app.prs, endedFromFeed: c.endedFromFeed, stored: w.ended, muted: w.muted });
     watch.setEnded(ended);
     if (!app.sampleMode) watch.setLive(c.live);
+    // What happened to the PRs we were already tracking? (First sight, and a restart with nothing new, announce nothing.)
+    let seq = notify.get().seq;
+    notify.add(eventsFor(app.view.live, c.live, notify.get().policy, { nextId: () => `n${++seq}` }));
     app.view = { mode: c.mode, live: c.live, ended, available: c.available, availableTotal: c.availableTotal };
   }
 
@@ -65,7 +70,15 @@ export function createApp({ store = new ConfigStore(), watch, files = [], prs = 
       authors: [...new Set(app.prs.map((p) => p.author))].sort(),
     };
   };
-  const snapshot = () => ({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
+  const snapshot = () => withNotifications({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
+  /** Alerts you have silenced move to their own list; the inbox goes to the browser newest first. */
+  function withNotifications(snap) {
+    const sil = notify.silencedIds(), n = notify.get();
+    snap.silenced = snap.insights.filter((i) => sil.has(i.id));
+    snap.insights = snap.insights.filter((i) => !sil.has(i.id));
+    snap.notifications = { policy: n.policy, inbox: [...n.inbox].reverse().slice(0, 100), total: n.inbox.length, unread: notify.unread(), lastSeen: n.lastSeen };
+    return snap;
+  }
 
   function broadcast() {
     app.version++;
@@ -168,6 +181,21 @@ export function createApp({ store = new ConfigStore(), watch, files = [], prs = 
       refreshJira();
       return json(res, 200, r);
     }
+    // Notification policy, the inbox, and silenced alerts. Nothing here touches PRs or Jira, so a change just tells the browser.
+    if (p.startsWith('/api/notify/') || p.startsWith('/api/alerts/')) {
+      const b = await readJson(req);
+      let r;
+      if (p === '/api/notify/policy' && m === 'PUT') r = notify.setGlobal(b.kind, b.enabled);
+      else if (p === '/api/notify/pr' && m === 'PUT') r = notify.setPR(b.id, b.kind, b.enabled === undefined ? null : b.enabled);
+      else if (p === '/api/notify/clear' && m === 'POST') r = notify.clear(b.id);
+      else if (p === '/api/notify/seen' && m === 'POST') { notify.markSeen(); r = { ok: true }; }
+      else if (p === '/api/alerts/silence' && m === 'POST') r = notify.silence(Array.isArray(b.ids) ? b.ids : []);
+      else if (p === '/api/alerts/restore' && m === 'POST') r = notify.restore(Array.isArray(b.ids) ? b.ids : []);
+      else return json(res, 404, { error: 'no such endpoint' });
+      if (!r.ok) return json(res, 400, r);
+      broadcast();
+      return json(res, 200, r);
+    }
     if (p === '/api/refresh' && m === 'POST') { await refreshJira(); return json(res, 200, { ok: true }); }
 
     // Jira helpers. Overrides in the body let the settings form test unsaved values.
@@ -255,7 +283,7 @@ export function createApp({ store = new ConfigStore(), watch, files = [], prs = 
 
   app.threeInstalled = !!threeDir;
   app.setPRs = (x) => { leaveSample(); const r = setPRs(x); broadcast(); return r; };
-  app.watch = watch;
+  app.watch = watch; app.notify = notify;
   /** Swap in a fresh file list (a rescan of the checkout). Returns whether anything changed. */
   const filesKey = (list) => list.map((f) => `${f.path}:${f.loc}:${f.complexity ?? 0}`).join('|');
   let currentFilesKey = filesKey(app.files);

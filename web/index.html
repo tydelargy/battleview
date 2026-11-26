@@ -21,6 +21,7 @@
       <div class="brand">BATTLE MAP<small id="sub">loading</small></div>
       <div class="right">
         <div class="counters" id="counters"></div>
+        <button class="icon" id="bellBtn" aria-label="Notifications" title="Notifications"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 20a1.9 1.9 0 0 0 3.4 0"/></svg><b id="bellCount" hidden></b></button>
         <button class="icon" id="alertsBtn" aria-label="Alerts" title="Alerts"><span class="glyph">&#9873;</span><b id="alertCount" hidden></b></button>
         <button class="icon" id="jiraPill" aria-label="Jira connection" title="Jira connection"><i class="dot" id="jiraDot"></i><span id="jiraTxt">Jira</span></button>
         <button class="icon" id="settingsBtn" aria-label="Settings" title="Settings"><span class="glyph">&#9881;</span></button>
@@ -43,6 +44,7 @@
   <section id="sheet"><div id="cards"></div></section>
 
   <aside id="alerts" hidden aria-label="Alerts"></aside>
+  <aside id="notifs" hidden aria-label="Notifications"></aside>
   <div id="modal" hidden><div class="msheet" id="msheet" role="dialog" aria-modal="true"></div></div>
   <div id="toast" hidden></div>
 </div>

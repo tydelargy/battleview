@@ -14,9 +14,18 @@ const srv = spawn('node', ['bin/battlemap.js', '--mock-jira', '--port', String(p
 await new Promise((r) => srv.stdout.on('data', (d) => /Battle Map at/.test(String(d)) && r()));
 const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
 const results = [];
-const step = async (name, fn) => { try { await fn(); results.push(['ok', name]); } catch (e) { results.push(['FAIL', name + ' :: ' + e.message.split('\n')[0]]); } };
+let shots = 0, current;
+const step = async (name, fn) => {
+  try { await fn(); results.push(['ok', name]); }
+  catch (e) {
+    const shot = path.join(os.tmpdir(), `ui-fail-${process.pid}-${++shots}.png`);
+    await current?.screenshot({ path: shot }).catch(() => {});
+    results.push(['FAIL', `${name} :: ${e.message.split('\n').slice(0, 12).join(' | ')}  [screenshot ${shot}]`]);
+  }
+};
 try {
   const page = await browser.newPage({ viewport: { width: 420, height: 860 } });
+  current = page;
   const errors = []; page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`http://127.0.0.1:${port}/`);
   await page.waitForSelector('.card');
@@ -58,7 +67,7 @@ try {
     await page.waitForFunction(() => /ENG-481 · In Review/.test(document.querySelector('.card[data-id="#2311"]').textContent), null, { timeout: 5000 });
     await page.click('#alertsBtn');
     assert.ok(!/ENG-481 is To Do/.test(await page.textContent('#alerts')), 'drift alert cleared');
-    await page.click('#alerts .btn');
+    await page.click('#al-close');
   });
   await step('comment on a ticket keeps working through a refresh', async () => {
     await page.fill('#cmt', 'looks good'); await page.click('#cmtGo');

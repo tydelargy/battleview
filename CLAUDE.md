@@ -6,7 +6,7 @@ A local, single-user tool: a tactical map of a codebase (files are buildings, fo
 
 ```
 npm test                 # unit, server and scene-wiring tests. Fast. No browser.
-npm run e2e              # real Chrome against a real server: Jira flows, PR tracking, filters and sorting
+npm run e2e              # real Chrome against a real server: Jira flows, PR tracking, filters and sorting, notifications and alerts
 npm start | npm run mock # sample repo and PRs | the same plus a fake Jira
 SHOTS_DIR=docs/screenshots node e2e/shot2.mjs readme   # regenerate every README screenshot
 ```
@@ -24,6 +24,7 @@ server/server.js          HTTP API + SSE. All state lives in `app`; every write 
 server/snapshot.js        joins repo files, tracked PRs and Jira into the one object the browser renders; drift "insights"
 server/providers/         code-host adapters for the sync: a PURE mapper (normalisePR) plus a runner that takes an injectable `exec`. github.js today; GitLab would be a sibling
 server/feedwatch.js       watches the feed's DIRECTORY, because a watch on the file dies when sync renames a new file over it
+server/notify.js          notifications: PURE detection (`detectEvents`, `shouldNotify`, `eventsFor`) plus a file-backed store for the inbox, policy and silenced alerts
 server/watch.js           which PRs are tracked (picks, author and path rules, ended PRs). PURE matching + a small file-backed store
 server/config.js          config file (0600), Jira settings validation, token redaction
 web/layout.js spires.js sigil.js building.js sites.js    PURE geometry and identity (sites.js: the construction-site look of the diff layer, Buildings style, plus the focus views File belts, Crates and Facade (plus the classic Hunks stack), which every style can use for a focused PR; layering rules below; building.js: hash-derived colour, silhouette, windows, index code, roofs; planSpires takes a `roofs` map so toppers stand on them). No DOM, no three. Unit tested
@@ -37,9 +38,10 @@ web/main.js               panels, dialogs, settings. All feed data goes in throu
 - **No untrusted HTML.** PR titles, authors, branch names and rule values come from outside. Build DOM with `h()` and `fill()` (text nodes). Never `innerHTML` with feed data. `e2e/ui.mjs` has an XSS test; keep it passing.
 - **The token never reaches the browser.** `redact()` strips it. Don't add a field to `/api/config` or the snapshot without checking it.
 - **Writes need `X-Battlemap: 1` and a same-origin Origin; the Host header is checked.** There is no login: it binds to 127.0.0.1 and must never be bound publicly. Single-user, local by design.
-- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js`, `building.js`, `sites.js`, `filters.js`, the matching functions in `watch.js` and the provider mappers take data and return data. If you need the clock, a file or the network, pass it in.
+- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js`, `building.js`, `sites.js`, `filters.js`, `notify.js` (the detection and policy functions), the matching functions in `watch.js` and the provider mappers take data and return data. If you need the clock, a file or the network, pass it in.
 - **The feed is the full set of open PRs.** `server/watch.js` treats a tracked PR that disappears from the feed as ended (closed), so a partial feed ends PRs. Sync scripts must write the whole set, or nothing.
 - **Tracking is opt-in; muting wins.** A stopped (muted) PR stays off even when a rule matches. Finished PRs are only kept if they were open and tracked, or picked. See the tests in `test/watch.test.js` before changing any of it.
+- **Notifications are events between two states of a tracked PR, computed in `reconcile()`.** First sight and ended PRs announce nothing, and the previous state survives a restart (it is the watch store's "was open" memory), so a change while the server was down is announced and an unchanged restart is silent. The global policy covers your own PRs; per-PR mutes never do. Alert ids are built from everything an alert is about, so silencing one can never hide another.
 - **The built-in sample is never persisted** (no tracking state, no "was open" memory), and `--mock-jira` writes nothing to disk.
 - **"Click outside closes" must read `e.composedPath()`, not `e.target.closest()`.** Chips and buttons re-render their list on click, so by the time the click reaches the document the target is detached and looks like it was outside.
 - **Layering: nothing may share a plane. This is the rule behind every flicker bug we have had (windows, belts, scaffolding).** Two surfaces in one plane z-fight, and which one wins changes with the camera and the frame. So:
@@ -61,4 +63,4 @@ This repo uses Jujutsu (`jj`). One commit per feature, stacked; fix-ups go into 
 
 ## Feed
 
-`battlemap --prs prs.json` reloads when the file changes. `battlemap-sync github` writes it from `gh`; the format is in the README. Fields the UI relies on beyond the basics: `updatedAt` and `createdAt` (age filters, sorting, flag height), `waitingSince` (how long a PR has waited on us, for "needs attention first"; sync computes it, and a feed without it falls back to `updatedAt`), `headSha` (to notice pushes), and `mine` (set by sync from the logged-in user). Sync tests use a stand-in `gh` script, never the network or a real account: keep it that way.
+`battlemap --prs prs.json` reloads when the file changes. `battlemap-sync github` writes it from `gh`; the format is in the README. Fields the UI relies on beyond the basics: `updatedAt` and `createdAt` (age filters, sorting, flag height), `waitingSince` (how long a PR has waited on us, for "needs attention first"; sync computes it, and a feed without it falls back to `updatedAt`), `headSha` (so notifications can tell a push exactly; without it they fall back to file sizes), and `mine` (set by sync from the logged-in user). Sync tests use a stand-in `gh` script, never the network or a real account: keep it that way.
