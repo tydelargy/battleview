@@ -11,26 +11,27 @@
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /**
- * A tower crane that fits a roof slot. Its height is `h`; the jib runs along the longer side of the slot.
+ * A tower crane whose size is the diff and nothing else. The whole crane is one model scaled by `h` (its mast height,
+ * which the caller takes from the global diff scale), so a 9-line crane is a small crane wherever it stands and two
+ * cranes compare by eye. The roof slot only says where it stands: its pad is flat and its area is the share of the
+ * file changed, so that second fact is still there without bending the first. A big crane may overhang a small roof.
  * Mast and jib take the status colour, the counterweight a darker one, the hook line and hook are metal.
  */
 export function craneParts({ x, y, w, d }, z0, h) {
-  const longX = w >= d, L = Math.max(w, d) * 0.96, s = clamp(Math.min(w, d) * 0.2, 0.45, 1.3);
+  const longX = w >= d, s = clamp(h * 0.055, 0.22, 1.3), L = clamp(h * 0.85, 2.2, 40);
   const at = (o) => (longX ? { x: x + o, y } : { x, y: y + o });   // a point along the jib, o from the mast
   const box = (p, bw, bd, z, bh, tone) => ({ x: p.x, y: p.y, w: bw, d: bd, z, h: bh, tone });
   const along = (len, thick) => (longX ? [len, thick] : [thick, len]);
-  const jibZ = z0 + Math.max(h - s, h * 0.9), parts = [];
-  parts.push(box({ x, y }, Math.min(w, d) * 0.7, Math.min(w, d) * 0.7, z0, Math.min(0.4, h * 0.1), 'metal'));        // base
+  const jibZ = z0 + h - s * 1.1, parts = [];                      // the jib's top is the crane's height
+  parts.push(box({ x, y }, w, d, z0, 0.2, 'pad'));                                                                       // the pad: the share of the file
   parts.push(box({ x, y }, s, s, z0, Math.max(0.1, jibZ - z0), 'status'));                                               // mast
-  const jibLen = L * 0.72;                                                                                       // jib: from just past the mast out to the far end
-  const [jw, jd] = along(jibLen, s * 0.9);
+  const jibLen = L * 0.72, [jw, jd] = along(jibLen, s * 0.9);
   parts.push(box(at(L * 0.5 - jibLen / 2), jw, jd, jibZ, s * 1.1, 'status'));
   const [cw, cd] = along(L * 0.26, s * 0.9);                                                                            // counter-jib
   parts.push(box(at(-L * 0.5 + L * 0.13), cw, cd, jibZ, s * 1.1, 'status'));
   const [bw, bd] = along(s * 2.2, s * 1.8);                                                                             // counterweight
   parts.push(box(at(-L * 0.5 + s * 1.1), bw, bd, jibZ - s * 1.1, s * 1.4, 'statusDark'));
-  parts.push(box({ x, y }, s * 1.7, s * 1.7, jibZ + s, s * 1.2, 'statusDark'));                                          // cab
-  const hang = clamp(h * 0.38, 1, 12), hookAt = at(L * 0.32);
+  const hang = clamp(h * 0.38, 0.6, 12), hookAt = at(L * 0.32);
   parts.push(box(hookAt, s * 0.22, s * 0.22, jibZ - hang, hang, 'metal'));                                               // cable
   parts.push(box(hookAt, s * 1.3, s * 1.3, jibZ - hang - s * 0.9, s * 0.9, 'metal'));                                    // hook block
   return parts;
@@ -80,28 +81,31 @@ export function scaffoldParts(rect, top, { pad = 0.5, lift = 3.2, maxPoles = 28 
   return parts;
 }
 
-/**
- * Everything one column (one PR on one file) becomes. `col` is a column from planSpires, `shell` is
- * {rect, h}: the building's footprint and how high that footprint is fully walled (scaffolding stops there).
- * Overview: crane (+ one taped floor if lines were deleted). Focused: scaffolding for the additions (as tall as the square root of the share of the file added, so a small change is still visible), and one taped
- * floor per deleting hunk (the last ones merged, at most three), stacked on the roof.
- */
-export function siteParts(col, shell, { loc = 1, floorH = (n) => clamp(0.5 + n * 0.05, 1.2, 5) } = {}) {
-  const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
-  let z = col.z0;
-  const delHunks = col.parts.filter((p) => p.kind === 'del').map((p) => p.n);
-  const floors = col.focused && delHunks.length ? mergeTail(delHunks, 3) : col.del > 0 ? [col.del] : [];
-  for (const n of floors) { const h = floorH(n); parts.push(...tapeFloor(slot, z, h)); z += h; }
-  if (col.focused) {
-    if (col.add > 0 && shell) parts.push(...scaffoldParts(shell.rect, clamp(shell.h * clamp(Math.sqrt(col.add / Math.max(1, loc)), 0.3, 1), Math.min(3, shell.h), shell.h)));
-  } else if (col.add > 0 || !floors.length) {
-    const h = Math.max(1.5, col.total - (z - col.z0));
-    parts.push(...craneParts(slot, z, h));
-  }
-  return parts;
-}
+/** One floor of the red-taped stack. Floors are all this tall, and there are as many as the deleted lines need. */
+export const FLOOR_H = 2.4, MAX_FLOORS = 10;
+const defaultHeight = (n) => 1.15 * Math.sqrt(n);
+const floorsFor = (n, heightOf) => (n > 0 ? clamp(Math.round(heightOf(n) / FLOOR_H), 1, MAX_FLOORS) : 0);
 
-function mergeTail(list, max) {
-  if (list.length <= max) return list;
-  return [...list.slice(0, max - 1), list.slice(max - 1).reduce((a, b) => a + b, 0)];
+/**
+ * What one column (one PR on one file) is made of, sized on the diff scale `heightOf(lines)` (the same one the toppers
+ * use) and nothing else. Returns {parts, top}: the boxes, and the height of the tallest thing, for flags and labels.
+ *   overview   a crane as tall as the additions, standing on one taped floor per FLOOR_H of deleted lines
+ *   focused    scaffolding as tall as the additions (never past the walled part of the building), and the deleting
+ *              hunks as taped floors on the roof, each hunk as many floors as its lines need
+ * So height always reads in lines: adds on the crane or scaffold, deletes on the floors, one scale for both.
+ */
+export function siteParts(col, shell, { heightOf = defaultHeight } = {}) {
+  const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
+  const delHunks = col.parts.filter((p) => p.kind === 'del').map((p) => p.n);
+  const counts = col.focused && delHunks.length ? delHunks.map((n) => floorsFor(n, heightOf)) : [floorsFor(col.del, heightOf)];
+  let z = col.z0, used = 0;
+  for (const n of counts) for (let i = 0; i < n && used < MAX_FLOORS; i++, used++) { parts.push(...tapeFloor(slot, z, FLOOR_H)); z += FLOOR_H; }
+  let top = z;
+  if (col.focused) {
+    if (col.add > 0 && shell) { const t = clamp(heightOf(col.add), Math.min(2, shell.h), shell.h); parts.push(...scaffoldParts(shell.rect, t)); }   // the scaffold is on the walls, below the roof: it does not change the top
+  } else if (col.add > 0) {
+    const h = Math.max(0.8, heightOf(col.add));
+    parts.push(...craneParts(slot, z, h)); top = z + h;
+  } else if (!used) { parts.push(...craneParts(slot, z, 0.8)); top = z + 0.8; }
+  return { parts, top };
 }

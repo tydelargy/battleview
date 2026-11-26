@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildLayout, WORLD } from './layout.js';
-import { planSpires, DIFF_COLORS } from './spires.js';
+import { planSpires, DIFF_COLORS, diffHeight } from './spires.js';
 import { ageDays, ageLift } from './filters.js';
 import { buildingFor, DEFAULT_STYLE, SHAPES } from './building.js';
 import { siteParts } from './sites.js';
@@ -329,11 +329,16 @@ export function createScene(host, handlers = {}) {
   }
 
   const capHeight = (c) => Math.min(2.4, 0.5 + Math.min(c.w, c.d) * 0.18);
+  const colTotal = (c) => (c.siteTop !== undefined ? c.siteTop : c.total);   // how tall the thing on this roof is: a site's own height, or the topper's
 
   // ---- construction sites (the Buildings style): cranes, scaffolding and red-taped floors instead of plain toppers ----
   // Planned once per set of columns (the shapes are pure, see web/sites.js), then drawn every frame while they grow.
   function planSites() {
-    S.sites = S.style.mode !== 'full' ? null : S.columns.map((c) => ({ c, parts: siteParts(c, S.styled.get(c.path)?.shell, { loc: S.layout.byPath.get(c.path).loc }) }));
+    S.sites = null;
+    for (const c of S.columns) c.siteTop = undefined;
+    if (S.style.mode !== 'full') return;
+    // sized on the same diff scale as the toppers (spires.js), so heights compare across the whole map
+    S.sites = S.columns.map((c) => { const r = siteParts(c, S.styled.get(c.path)?.shell, { heightOf: (n) => diffHeight(n, S.opts.mode) }); c.siteTop = r.top - c.z0; return { c, parts: r.parts }; });
   }
   const siteColor = (tone, st) => {
     switch (tone) {
@@ -341,6 +346,7 @@ export function createScene(host, handlers = {}) {
       case 'statusDark': return _c.copy(st).offsetHSL(0, 0, -0.16);
       case 'metal': return _c.set(0x9aa5b1);
       case 'add': return _c.set(DIFF_COLORS.add);
+      case 'pad': return _c.copy(st).offsetHSL(0, -0.15, -0.22);
       case 'tape': return _c.set(DIFF_COLORS.del);
       case 'post': return _c.set(0xd7dbe2);
       default: return _c.set(0x6b6670);            // the emptied floor
@@ -388,7 +394,7 @@ export function createScene(host, handlers = {}) {
       drawSites(p);
       [boxes, caps, gBoxes, gCaps].forEach((x) => x.end());
       drawRims();
-      S.focusLabels = S.columns.filter((c) => c.focused).slice(0, diffLabels.length).map((c) => ({ c, top: c.z0 + (c.total + capHeight(c)) * p + 1.5 }));
+      S.focusLabels = S.columns.filter((c) => c.focused).slice(0, diffLabels.length).map((c) => ({ c, top: c.z0 + (colTotal(c) + capHeight(c)) * p + 1.5 }));
       return;
     }
     const solidCols = S.columns.filter((c) => !c.dimmed), glassCols = S.columns.filter((c) => c.dimmed);
@@ -407,7 +413,7 @@ export function createScene(host, handlers = {}) {
     }
     [boxes, caps, gBoxes, gCaps].forEach((x) => x.end());
     drawRims();
-    S.focusLabels = S.columns.filter((c) => c.focused).slice(0, diffLabels.length).map((c) => ({ c, top: c.z0 + (c.total + capHeight(c)) * p + 1.5 }));
+    S.focusLabels = S.columns.filter((c) => c.focused).slice(0, diffLabels.length).map((c) => ({ c, top: c.z0 + (colTotal(c) + capHeight(c)) * p + 1.5 }));
   }
 
   // ---- flags (PR banners, owned by the UI, positioned here) ----
@@ -420,7 +426,7 @@ export function createScene(host, handlers = {}) {
       const x = cols.reduce((a, c) => a + c.x, 0) / cols.length, y = cols.reduce((a, c) => a + c.y, 0) / cols.length;
       // Optionally the pole grows with the PR's age, so what has been open longest stands tallest.
       const lift = S.opts.ageLift ? ageLift(ageDays(pr.createdAt, Date.now())) : 0;
-      const top = Math.max(...cols.map((c) => c.z0 + c.total + capHeight(c))) + 6 + lift;
+      const top = Math.max(...cols.map((c) => c.z0 + colTotal(c) + capHeight(c))) + 6 + lift;
       want.set(pr.id, { pr, x, y, top });
     }
     for (const [id, f] of S.flags) if (!want.has(id)) { f.el.remove(); S.flags.delete(id); }
@@ -522,7 +528,7 @@ export function createScene(host, handlers = {}) {
         const col = statusColor(f.pr.status), p = S.growth.p;
         for (const c of S.columns) {
           if (c.prId !== f.pr.id || c.dimmed && S.ui.lines !== 'all') continue;
-          const t = project(c.x, c.y, c.z0 + (c.total + capHeight(c)) * p);
+          const t = project(c.x, c.y, c.z0 + (colTotal(c) + capHeight(c)) * p);
           if (!t.vis) continue;
           let el = lines[li]; if (!el) { el = svgEl('path', 'bm-line'); gLines.appendChild(el); lines[li] = el; }
           const ax = f.sx, ay = f.sy - FLAG_H / 2;
@@ -559,7 +565,7 @@ export function createScene(host, handlers = {}) {
     const xs = cols.flatMap((c) => [c.x - c.w / 2, c.x + c.w / 2]), ys = cols.flatMap((c) => [c.y - c.d / 2, c.y + c.d / 2]);
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
     const r = Math.max(26, Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 + 18);
-    flyTo(cx, cy, Math.max(...cols.map((c) => c.z0 + c.total)) / 2, r);
+    flyTo(cx, cy, Math.max(...cols.map((c) => c.z0 + colTotal(c))) / 2, r);
   }
   function flyToFile(path) { const l = S.layout?.byPath.get(path); if (l) flyTo(l.mx, l.my, roofOf(l).top / 2, Math.max(22, Math.hypot(l.r.w, l.r.h) / 2 + 14)); }
   function setView(kind, { instant = false } = {}) {
