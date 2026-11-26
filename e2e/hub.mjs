@@ -27,18 +27,20 @@ else if (/^pr list/.test(line)) {
 `);
 fs.chmodSync(fake, 0o755);
 
-const srv = spawn('node', ['bin/battlemap.js', '--hub', '--port', String(port), '--data', data, '--config', cfg, '--gh', fake], { stdio: ['ignore', 'pipe', 'inherit'] });
+const srv = spawn('node', ['bin/battlemap.js', '--port', String(port), '--data', data, '--config', cfg, '--gh', fake], { stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((r) => srv.stdout.on('data', (d) => /Battle Map/.test(String(d)) && r()));
 process.on('exit', () => srv?.kill());
 const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const results = []; let page, n = 0;
 const step = async (name, fn) => { try { await fn(); results.push(['ok', name]); } catch (e) { const shot = path.join(dir, `fail-${++n}.png`); await page?.screenshot({ path: shot }).catch(() => {}); results.push(['FAIL', `${name} :: ${e.message.split('\n').slice(0, 3).join(' | ')}  [screenshot ${shot}]`]); } };
+// a hover only registers when the pointer actually moves, so approach the target from beside it
+const hover = async (p) => { await page.mouse.move(p.sx + 30, p.sy + 30); await page.mouse.move(p.sx, p.sy, { steps: 3 }); };
 const worldApi = () => fetch(`${base}/api/hub/world`).then((r) => r.json());
 const info = () => page.evaluate(() => window.battlemap.world.info());
 const screen = (hex) => page.evaluate((h) => window.battlemap.world.world().hexScreen(h), hex);
-const waitFor = (fn, arg, what, ms = 8000) => page.waitForFunction(fn, arg, { timeout: ms }).catch(() => { throw new Error(`timed out: ${what}`); });
+const waitFor = (fn, arg, what, ms = 8000) => page.waitForFunction(fn, arg, { timeout: ms }).catch(async () => { throw new Error(`timed out: ${what} (${JSON.stringify(await info().catch(() => null))})`); });
 async function addAt(hex, repo) {
-  const p = await screen(hex); await page.mouse.move(p.sx, p.sy); await waitFor(() => !document.getElementById('wplus').hidden, null, 'the + appears on a hovered free hex');
+  const p = await screen(hex); await hover(p); await waitFor(() => !document.getElementById('wplus').hidden, null, 'the + appears on a hovered free hex');
   await page.click('#wplus'); await page.fill('#wadd-url', repo); await page.click('#wadd-go');
 }
 
@@ -82,7 +84,7 @@ try {
 
   await step('hovering a city shows its three numbers, a click goes in, and the back button returns', async () => {
     const w = await worldApi(), a = w.cities.find((c) => c.id === 'org--alpha'), p = await screen(a);
-    await page.mouse.move(p.sx, p.sy); await waitFor(() => /org\/alpha/.test(document.getElementById('wstats').textContent), null, 'the widget names the hovered city');
+    await hover(p); await waitFor(() => /org\/alpha/.test(document.getElementById('wstats').textContent), null, 'the widget names the hovered city');
     const t = await page.textContent('#wstats'); assert.match(t, /Tracking/); assert.match(t, /Yours open/); assert.match(t, /Need action/);
     assert.equal(await page.textContent('#ws-mine b'), '1'); assert.equal(await page.textContent('#ws-needs b'), '3');
     await page.mouse.click(p.sx, p.sy);
@@ -112,7 +114,7 @@ try {
     const before = (await worldApi()).cities.map((c) => `${c.id}@${c.q},${c.r}`).sort();
     await page.reload(); await page.waitForSelector('#world:not([hidden]) canvas'); await waitFor(() => window.battlemap.world.info().cities === 3, null, 'reload');
     srv.kill('SIGTERM'); await new Promise((r) => srv.once('exit', r));
-    const again = spawn('node', ['bin/battlemap.js', '--hub', '--port', String(port), '--data', data, '--config', cfg, '--gh', fake], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const again = spawn('node', ['bin/battlemap.js', '--port', String(port), '--data', data, '--config', cfg, '--gh', fake], { stdio: ['ignore', 'pipe', 'inherit'] });
     await new Promise((r) => again.stdout.on('data', (d) => /Battle Map/.test(String(d)) && r())); process.on('exit', () => again.kill());
     assert.deepEqual((await worldApi()).cities.map((c) => `${c.id}@${c.q},${c.r}`).sort(), before);
   });
@@ -120,7 +122,7 @@ try {
   await step('forgetting a city asks twice and removes it and its saved state', async () => {
     await page.reload(); await page.waitForSelector('#world:not([hidden]) canvas'); await waitFor(() => window.battlemap.world.info().cities === 3, null, 'loaded');
     const w = await worldApi(), cities = w.cities, forgettable = cities.find((c) => cities.filter((o) => o !== c).every((o) => cities.filter((x) => x !== c).some((x) => x !== o && Math.max(Math.abs(o.q - x.q), Math.abs(o.r - x.r), Math.abs(o.q + o.r - x.q - x.r)) === 1))) || cities[0];
-    const p = await screen(forgettable); await page.mouse.move(p.sx, p.sy); await waitFor((id) => new RegExp(id.replace('--', '/')).test(document.getElementById('wstats').textContent), forgettable.id, 'widget');
+    const p = await screen(forgettable); await hover(p); await waitFor((id) => new RegExp(id.replace('--', '/')).test(document.getElementById('wstats').textContent), forgettable.id, 'widget');
     await page.click('#ws-forget'); assert.match(await page.textContent('#ws-forget'), /SURE/); await page.click('#ws-forget');
     await waitFor(() => window.battlemap.world.info().cities === 2, null, 'gone');
     assert.equal(fs.existsSync(path.join(data, 'cities', forgettable.id)), false);

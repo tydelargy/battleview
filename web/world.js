@@ -88,7 +88,10 @@ export function createWorld(host, handlers = {}) {
 
   // ---- pointer: hover, click a city to go in, drag a city to another slot ----
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -1.5), hit = new THREE.Vector3();
-  function groundAt(cx, cy) { const r = renderer.domElement.getBoundingClientRect(); ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera); return ray.ray.intersectPlane(plane, hit) ? { x: hit.x, z: hit.z } : null; }
+  // The camera's matrices are only refreshed when a frame renders, so right after a load (or on a slow machine) picking and
+  // projecting could use different ones. Bring them up to date wherever they are used.
+  const syncCamera = () => { camera.updateMatrixWorld(); camera.matrixWorldInverse.copy(camera.matrixWorld).invert(); };
+  function groundAt(cx, cy) { syncCamera(); const r = renderer.domElement.getBoundingClientRect(); ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera); return ray.ray.intersectPlane(plane, hit) ? { x: hit.x, z: hit.z } : null; }
   function target(cx, cy) {
     const g = groundAt(cx, cy); if (!g) return { type: null };
     const hex = fromWorld(g.x, g.z, S), k = hexKey(hex), id = st.byHex.get(k);
@@ -126,7 +129,7 @@ export function createWorld(host, handlers = {}) {
   });
 
   // ---- frame ----
-  function project(x, y, z) { _p.set(x, y, z).project(camera); return { sx: (_p.x * 0.5 + 0.5) * st.size.w, sy: (-_p.y * 0.5 + 0.5) * st.size.h, vis: _p.z < 1 }; }
+  function project(x, y, z) { syncCamera(); _p.set(x, y, z).project(camera); return { sx: (_p.x * 0.5 + 0.5) * st.size.w, sy: (-_p.y * 0.5 + 0.5) * st.size.h, vis: _p.z < 1 }; }
   let running = true;
   function frame() {
     if (!running) return; requestAnimationFrame(frame);

@@ -19,10 +19,14 @@ export const cityId = (r) => repoKey(r).toLowerCase().replace(/\//g, '--');
 const ID = /^[a-z0-9_.-]+(--[a-z0-9_.-]+){1,2}$/;
 const MAX_CITIES = 60;
 
-export function createHub({ dataDir, store = new ConfigStore({ persist: false }), gh = 'gh', exec, now = () => Date.now(), log = () => {},
+/** Where a hub gets its repos from: three calls (the file tree, three PR numbers, the PRs). GitHub through gh by default; the demo has its own. */
+export const ghProvider = ({ gh = 'gh', exec } = {}) => { const o = { gh, ...(exec ? { exec } : {}) }; return {
+  tree: (ref) => fetchRepoTree({ repo: ref, ...o }), stats: (ref) => fetchPRStats({ repo: ref, ...o }), prs: (ref) => fetchGithub({ repo: `${ref.owner}/${ref.name}`, host: ref.host, ...o }) }; };
+
+export function createHub({ dataDir, store = new ConfigStore({ persist: false }), gh = 'gh', exec, provider = null, now = () => Date.now(), log = () => {},
   statsTtl = 300_000, treeTtl = 3_600_000, prEvery = 120_000, idleAfter = 300_000, autoSync = true } = {}) {
   if (!dataDir) throw new Error('createHub needs a dataDir');
-  const file = path.join(dataDir, 'hub.json'), ghOpts = { gh, ...(exec ? { exec } : {}) };
+  const file = path.join(dataDir, 'hub.json'), source = provider || ghProvider({ gh, exec });
   const hub = { cities: [], apps: new Map(), stats: new Map(), seen: new Map(), watches: new Map(), notifies: new Map(), server: null, timers: [] };
   const cityDir = (id) => path.join(dataDir, 'cities', id);
 
@@ -57,7 +61,7 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
   async function refreshStats(id) {
     const c = find(id); if (!c) return null;
     const slot = hub.stats.get(id) || {}; hub.stats.set(id, { ...slot, pending: true });
-    try { const s = await fetchPRStats({ repo: cityRepo(c), ...ghOpts }); hub.stats.set(id, { ...s, at: now(), error: null }); }
+    try { const s = await source.stats(cityRepo(c)); hub.stats.set(id, { ...s, at: now(), error: null }); }
     catch (e) { hub.stats.set(id, { ...slot, pending: false, error: String(e.message || e).split('\n')[0], at: now() }); }
     return hub.stats.get(id);
   }
@@ -70,7 +74,7 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
     for (const c of hub.cities) { const s = hub.stats.get(c.id); if (!s || (!s.pending && now() - (s.at || 0) > statsTtl)) refreshStats(c.id); }
     return hub.cities.map((c) => {
       const t = readTree(c.id);
-      return { id: c.id, key: repoKey(c), host: c.host, owner: c.owner, name: c.name, q: c.q, r: c.r, files: t?.files?.length ?? 0, branch: t?.branch || null, estimated: true, stats: statsView(c) };
+      return { id: c.id, key: repoKey(c), host: c.host, owner: c.owner, name: c.name, q: c.q, r: c.r, files: t?.files?.length ?? 0, branch: t?.branch || null, estimated: t?.estimated ?? true, stats: statsView(c) };
     });
   }
   const worldView = () => ({ cities: summary(), slots: frontier(occupied()), max: MAX_CITIES });
@@ -84,7 +88,7 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
     if (hub.cities.length >= MAX_CITIES) return { ok: false, error: `That is as many cities as the map holds (${MAX_CITIES})` };
     const open = frontier(occupied());
     if (slot && !open.some((h) => h.q === slot.q && h.r === slot.r)) return { ok: false, error: 'Cities have to sit next to another city' };
-    let tree; try { tree = await fetchRepoTree({ repo: ref, ...ghOpts }); } catch (e) { return { ok: false, error: String(e.message || e).split('\n')[0] }; }   // look before registering: a typo or a missing login never leaves an empty plot
+    let tree; try { tree = await source.tree(ref); } catch (e) { return { ok: false, error: String(e.message || e).split('\n')[0] }; }   // look before registering: a typo or a missing login never leaves an empty plot
     const at = slot || nextSlot(occupied());
     hub.cities.push({ ...c, q: at.q, r: at.r, addedAt: new Date(now()).toISOString() }); writeTree(c.id, tree); save();
     refreshStats(c.id);
@@ -108,12 +112,12 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
   // ---- going into a city: its app, and its PRs, start now ----
   async function syncPRs(id) {
     const c = find(id), app = hub.apps.get(id); if (!c || !app) return;
-    try { const r = await fetchGithub({ repo: `${c.owner}/${c.name}`, host: c.host, ...ghOpts }); app.city.warnings = r.warnings; app.setPRs(r.prs); }
+    try { const r = await source.prs(cityRepo(c)); app.city.warnings = r.warnings; app.setPRs(r.prs); }
     catch (e) { app.city.error = String(e.message || e).split('\n')[0]; log(`${id}: PR sync failed: ${app.city.error}`); }
   }
   async function refreshTree(id) {
     const c = find(id), app = hub.apps.get(id); if (!c || !app) return;
-    try { const t = await fetchRepoTree({ repo: cityRepo(c), ...ghOpts }); writeTree(id, t); app.city.warnings = t.warnings; app.setFiles(t.files); } catch (e) { log(`${id}: tree refresh failed: ${e.message}`); }
+    try { const t = await source.tree(cityRepo(c)); writeTree(id, t); app.city.warnings = t.warnings; app.setFiles(t.files); } catch (e) { log(`${id}: tree refresh failed: ${e.message}`); }
   }
   function enter(id) {
     const c = find(id); if (!c) return null;
@@ -121,7 +125,7 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
     if (!hub.apps.has(id)) {
       const tree = readTree(id) || { files: [], warnings: [] };
       const app = createApp({ store, watch: watchOf(id), notify: notifyOf(id), files: tree.files, prs: null, sampleMode: false, log });   // no feed yet: what was tracked last time shows at once, the sync replaces it
-      app.city = { id, key: repoKey(c), estimated: true, branch: tree.branch || null, warnings: tree.warnings || [], error: null };
+      app.city = { id, key: repoKey(c), estimated: tree.estimated ?? true, branch: tree.branch || null, warnings: tree.warnings || [], error: null };
       hub.apps.set(id, app); app.start();
       if (autoSync) { syncPRs(id); if (!tree.fetchedAt || now() - tree.fetchedAt > treeTtl) refreshTree(id); }
     }

@@ -7,7 +7,7 @@ A local, single-user tool: a tactical map of a codebase (files are buildings, fo
 ```
 npm test                 # unit, server and scene-wiring tests. Fast. No browser.
 npm run e2e              # real Chrome against a real server: Jira flows, PR tracking, filters and sorting, notifications and alerts
-npm start | npm run mock # sample repo and PRs | the same plus a fake Jira
+npm start | npm run mock # the app (a world of cities) | the same with a pretend GitHub and a fake Jira; `npm run sample` is the old single map
 SHOTS_DIR=docs/screenshots node e2e/shot2.mjs readme   # regenerate every README screenshot
 ```
 
@@ -25,7 +25,8 @@ server/snapshot.js        joins repo files, tracked PRs and Jira into the one ob
 server/providers/         code-host adapters for the sync: a PURE mapper (normalisePR) plus a runner that takes an injectable `exec`. github.js today; GitLab would be a sibling
 server/feedwatch.js       watches the feed's DIRECTORY, because a watch on the file dies when sync renames a new file over it
 server/notify.js          notifications: PURE detection (`detectEvents`, `shouldNotify`, `eventsFor`) plus a file-backed store for the inbox, policy and silenced alerts
-server/hub.js             many repos in one process (`battlemap --hub`): the list of cities, each built from the remote alone, one isolated app per city under /r/<id>/
+server/demo.js            a pretend GitHub (acme/platform = the built-in sample, acme/billing-api, acme/mobile-app) for `--demo` / `npm run mock`; the hub takes it as its provider
+server/hub.js             the app: many repos in one process (plain `battlemap`): the list of cities, each built from the remote alone, one isolated app per city under /r/<id>/
 server/watch.js           which PRs are tracked (picks, author and path rules, ended PRs). PURE matching + a small file-backed store
 server/config.js          config file (0600), Jira settings validation, token redaction
 packaging/build.mjs    builds dist/ (deb, AppImage, tarball, Windows zip and setup .exe); downloads are pinned by SHA-256. `test/packaging.test.js` runs the staged app and checks every layout. Change a layout, change the test

@@ -5,10 +5,15 @@ toppers standing on the buildings they change, and Jira tickets hang off the PRs
 
 ```
 npm install          # pulls three.js
-npm start            # sample repo + sample PRs         -> http://localhost:4747
-npm run mock         # same, plus a fake Jira to play with
-battlemap --repo ~/code/my-project --prs prs.json        # your repo, your PRs
+npm start            # the app: a world of cities, one per repo     -> http://localhost:4747
+npm run mock         # try it with nothing connected: a pretend GitHub and a fake Jira
 ```
+
+Battle Map is one app. It opens on a **world** where every repo is a small city on its own hex of land; click a city to go into its map (files as buildings, PRs standing on them, Jira tickets hanging off them), and add a repo by its URL with the **+** on a free hex. Nothing is cloned: repos are read through the [GitHub CLI](https://cli.github.com) (`gh auth login`).
+
+**In the mock** (`npm run mock`) the world starts with one city, `acme/platform` (the built-in sample). Hover a glowing free hex beside it, press **+**, and add `acme/billing-api` or `acme/mobile-app`: they exist only in the pretend GitHub. Go in, track a teammate's PR (**+ TRACK PRS**), come back out with **ALL REPOS**, and the world shows what you track. The mock keeps nothing between runs.
+
+Older single-map modes still work: `npm run sample`, or `battlemap --repo ~/code/my-project --prs prs.json`.
 
 Needs Node 20+. `npm link` gives you a global `battlemap` command.
 
@@ -166,7 +171,7 @@ Notifications, your defaults and per-PR overrides, and silenced alerts are saved
 
 ## Install
 
-Pick one. All of them run the same thing: `battlemap --hub`, the world of cities below, on http://127.0.0.1:4747. They read GitHub through the [GitHub CLI](https://cli.github.com) (`gh auth login`; for Enterprise `gh auth login --hostname ghe.example.com`), so Battle Map never handles a token, and nothing is ever cloned.
+Pick one. All of them run the same thing: `battlemap`, the world of cities below, on http://127.0.0.1:4747. They read GitHub through the [GitHub CLI](https://cli.github.com) (`gh auth login`; for Enterprise `gh auth login --hostname ghe.example.com`), so Battle Map never handles a token, and nothing is ever cloned.
 
 | | what you get | needs |
 |---|---|---|
@@ -191,7 +196,7 @@ The Windows setup is a self-extracting archive (7-Zip's SFX stub): it has been b
 
 ## All your repos on one map
 
-`battlemap --hub` is the way to watch more than one repo. The first page is the **world**: every repo is a small city on its own hex of land, the cities sit side by side, and nothing connects them. A city's hill gets a biome (meadow, forest, desert, tundra, volcanic, savanna, marsh, alpine) from a hash of its `org/name`, so a repo always grows the same plot.
+Battle Map's first page is the **world**, and there is no separate mode to turn on: every repo is a small city on its own hex of land, the cities sit side by side, and nothing connects them. A city's hill gets a biome (meadow, forest, desert, tundra, volcanic, savanna, marsh, alpine) from a hash of its `org/name`, so a repo always grows the same plot.
 
 ![The world: four cities on their hills, the hovered one showing its numbers](docs/screenshots/world.png)
 
@@ -201,10 +206,11 @@ The Windows setup is a self-extracting archive (7-Zip's SFX stub): it has been b
 * **Forget** (in the widget, asks twice) removes a city and its saved state.
 
 ```
-battlemap --hub                      # data in ~/.local/share/battlemap  (--data DIR to change it)
+battlemap                            # data in ~/.local/share/battlemap  (--data DIR to change it)
+battlemap --demo --mock-jira         # the pretend GitHub and fake Jira (what `npm run mock` runs)
 ```
 
-`--repo`, `--prs` and the sample map still work as before for a single repo.
+`--sample`, `--repo` and `--prs` still open a single map, as before.
 
 ## Running it for real
 

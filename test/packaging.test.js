@@ -23,7 +23,7 @@ test('the staged app is small, has no tests or docs, and carries only the three.
 });
 
 test('the staged app runs on its own: the hub starts, serves the page and the vendored three.js, and answers', async () => {
-  const dir = tmp(), s = stage(path.join(dir, 'stage')), srv = spawn(process.execPath, [path.join(s, 'bin', 'battlemap.js'), '--hub', '--port', '0', '--data', path.join(dir, 'data'), '--config', path.join(dir, 'config.json')], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  const dir = tmp(), s = stage(path.join(dir, 'stage')), srv = spawn(process.execPath, [path.join(s, 'bin', 'battlemap.js'), '--port', '0', '--data', path.join(dir, 'data'), '--config', path.join(dir, 'config.json')], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     const url = await new Promise((resolve, reject) => { let out = ''; const t = setTimeout(() => reject(new Error('did not start: ' + out)), 10000); srv.stdout.on('data', (d) => { out += d; const m = out.match(/at (http:\/\/\S+)/); if (m) { clearTimeout(t); resolve(m[1]); } }); srv.stderr.on('data', (d) => { out += d; }); });
     assert.equal((await fetch(url + '/')).status, 200);
@@ -33,7 +33,7 @@ test('the staged app runs on its own: the hub starts, serves the page and the ve
 });
 
 test('a second launch of a running hub opens it instead of failing', async () => {
-  const dir = tmp(), s = stage(path.join(dir, 'stage')), args = (port) => [path.join(s, 'bin', 'battlemap.js'), '--hub', '--port', String(port), '--data', path.join(dir, 'data'), '--config', path.join(dir, 'config.json')];
+  const dir = tmp(), s = stage(path.join(dir, 'stage')), args = (port) => [path.join(s, 'bin', 'battlemap.js'), '--port', String(port), '--data', path.join(dir, 'data'), '--config', path.join(dir, 'config.json')];
   const first = spawn(process.execPath, args(4879), { cwd: dir, stdio: ['ignore', 'pipe', 'inherit'] });
   try {
     await new Promise((r) => first.stdout.on('data', (d) => /Battle Map/.test(String(d)) && r()));

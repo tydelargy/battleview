@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const port = 4790, cfgFile = path.join(os.tmpdir(), `bm-ui-${Date.now()}.json`);
-const srv = spawn('node', ['bin/battlemap.js', '--mock-jira', '--port', String(port), '--mock-port', '4791', '--config', cfgFile], { stdio: ['ignore', 'pipe', 'inherit'] });
+const srv = spawn('node', ['bin/battlemap.js', '--sample', '--mock-jira', '--port', String(port), '--mock-port', '4791', '--config', cfgFile], { stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((r) => srv.stdout.on('data', (d) => /Battle Map at/.test(String(d)) && r()));
 const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
 const results = [];

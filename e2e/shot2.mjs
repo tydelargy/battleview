@@ -14,7 +14,7 @@ import { samplePRs } from '../server/sample.js';
 
 const port = 4812, base = `http://127.0.0.1:${port}`;
 const out = path.resolve(process.env.SHOTS_DIR || os.tmpdir());
-const srv = spawn('node', ['bin/battlemap.js', '--mock-jira', '--port', String(port), '--mock-port', '4813', '--config', path.join(os.tmpdir(), `shot2-cfg-${process.pid}.json`)], { stdio: ['ignore', 'pipe', 'inherit'] });
+const srv = spawn('node', ['bin/battlemap.js', '--sample', '--mock-jira', '--port', String(port), '--mock-port', '4813', '--config', path.join(os.tmpdir(), `shot2-cfg-${process.pid}.json`)], { stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((r) => srv.stdout.on('data', (d) => /Battle Map at/.test(String(d)) && r()));
 const toStart = "eval:document.getElementById('cards').scrollLeft=0";   // selecting a PR scrolls the tray; start the next shot from the left
 const README = ['shot:overview', 'view:3d', 'wait:2500', 'shot:3d', 'view:iso', 'wait:2500',
