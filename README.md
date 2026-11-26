@@ -164,6 +164,31 @@ Notifications are worked out on the server by comparing each tracked PR with how
 
 Notifications, your defaults and per-PR overrides, and silenced alerts are saved next to the config as `config.notify.json` (mode 0600), except under `--mock-jira`. Desktop (system) notifications are not part of this; it is in-app only.
 
+## Install
+
+Pick one. All of them run the same thing: `battlemap --hub`, the world of cities below, on http://127.0.0.1:4747. They read GitHub through the [GitHub CLI](https://cli.github.com) (`gh auth login`; for Enterprise `gh auth login --hostname ghe.example.com`), so Battle Map never handles a token, and nothing is ever cloned.
+
+| | what you get | needs |
+|---|---|---|
+| **AppImage** (Linux) | one file with its own Node: `chmod +x Battle-Map-*.AppImage && ./Battle-Map-*.AppImage` | nothing |
+| **`.deb`** (Debian, Ubuntu) | `sudo apt install ./battlemap_*.deb`: a `battlemap` command and a menu entry | `nodejs` 20+ (declared) |
+| **Local web** (any Linux) | unpack `battlemap-*-linux-x64.tar.gz`, run `./install.sh`: installs under `~/.local`, adds a menu entry and a systemd user service so the page is always there. No root. | Node 20+ |
+| **Windows** | `Battle-Map-*-Setup.exe` (unpacks to `%LOCALAPPDATA%\Battle Map` and starts), or the portable `Battle-Map-*-win-x64.zip` (run `Battle Map.cmd`) | nothing |
+
+Launching it twice just opens the page again. `battlemap --stop` stops what the launcher started (Linux); the service version is `systemctl --user stop battlemap`.
+
+**Build them yourself** (a checkout with `npm ci` done; the Node, AppImage and SFX pieces are downloaded once, pinned by SHA-256, into `packaging/.cache`):
+
+```
+npm run package            # everything below that your machine can build, into dist/
+npm run package:appimage   # needs mksquashfs (squashfs-tools)
+npm run package:deb        # needs dpkg-deb (and fakeroot, if you are not root)
+npm run package:tarball
+npm run package:win        # needs 7z (p7zip-full); builds on Linux, but only runs on Windows
+```
+
+The Windows setup is a self-extracting archive (7-Zip's SFX stub): it has been built and inspected but not run on a Windows machine yet.
+
 ## All your repos on one map
 
 `battlemap --hub` is the way to watch more than one repo. The first page is the **world**: every repo is a small city on its own hex of land, the cities sit side by side, and nothing connects them. A city's hill gets a biome (meadow, forest, desert, tundra, volcanic, savanna, marsh, alpine) from a hash of its `org/name`, so a repo always grows the same plot.

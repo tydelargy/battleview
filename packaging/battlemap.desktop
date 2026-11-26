@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Battle Map
+GenericName=Codebase map
+Comment=Every repo as a city: open PRs and Jira tickets on a 3D map of your code
+Exec=battlemap
+Icon=battlemap
+Terminal=false
+Categories=Development;
+Keywords=git;pull request;jira;map;
+StartupNotify=false

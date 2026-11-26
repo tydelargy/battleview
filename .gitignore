@@ -28,3 +28,5 @@ Thumbs.db
 # jj / local agent state
 .jj/
 .claude/
+dist/
+packaging/.cache/

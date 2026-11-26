@@ -28,6 +28,7 @@ server/notify.js          notifications: PURE detection (`detectEvents`, `should
 server/hub.js             many repos in one process (`battlemap --hub`): the list of cities, each built from the remote alone, one isolated app per city under /r/<id>/
 server/watch.js           which PRs are tracked (picks, author and path rules, ended PRs). PURE matching + a small file-backed store
 server/config.js          config file (0600), Jira settings validation, token redaction
+packaging/build.mjs    builds dist/ (deb, AppImage, tarball, Windows zip and setup .exe); downloads are pinned by SHA-256. `test/packaging.test.js` runs the staged app and checks every layout. Change a layout, change the test
 web/layout.js spires.js sigil.js building.js sites.js    PURE geometry and identity (sites.js: the construction-site look of the diff layer, Buildings style, plus the focus views File belts, Crates and Facade (plus the classic Hunks stack), which every style can use for a focused PR; layering rules below; building.js: hash-derived colour, silhouette, windows, index code, roofs; planSpires takes a `roofs` map so toppers stand on them). No DOM, no three. Unit tested
 web/hex.js biome.js cityshape.js    PURE world view: hex grid and the placement rules (cities touch, no splitting the group), a biome per repo name, a city's files as a few boxes
 web/world.js worldui.js   the world view: Three.js plots and drag, then the stats widget, the + and the add dialog. Look and move only: no PRs, no diffs

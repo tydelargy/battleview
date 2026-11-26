@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { ConfigStore } from '../server/config.js';
 import { createApp } from '../server/server.js';
@@ -66,13 +67,22 @@ if (!['server', 'cloud'].includes(o.mockFlavor)) { console.error('--mock-flavor 
 const store = new ConfigStore({ file: o.config });
 if (o.hub) {
   if (o.repo || o.prs) { console.error('--hub cannot be combined with --repo or --prs: add repos from the map'); process.exit(1); }
-  const dataDir = path.resolve(o.data || process.env.BATTLEMAP_DATA || path.join(process.env.XDG_DATA_HOME || path.join(process.env.HOME || '.', '.local', 'share'), 'battlemap'));
+  const dataDir = path.resolve(o.data || process.env.BATTLEMAP_DATA || path.join(process.env.XDG_DATA_HOME || (process.platform === 'win32' && process.env.LOCALAPPDATA) || path.join(os.homedir(), '.local', 'share'), 'battlemap'));
+  const openIt = (u) => { if (!o.open) return; const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'; spawn(cmd, process.platform === 'win32' ? ['/c', 'start', '', u] : [u], { stdio: 'ignore', detached: true }).on('error', () => {}).unref(); };
   const hub = createHub({ dataDir, store, gh: o.gh || process.env.BATTLEMAP_GH || 'gh', log: (m) => console.warn(m) });
   let hi;
-  try { hi = await hub.listen(o.port, o.host); } catch (e) { console.error(e.code === 'EADDRINUSE' ? `Port ${o.port} is in use. Try --port ${o.port + 1}.` : e.message); process.exit(1); }
+  try { hi = await hub.listen(o.port, o.host); }
+  catch (e) {
+    if (e.code === 'EADDRINUSE') {   // a second launch (a desktop icon clicked twice): if it is Battle Map that has the port, just open it
+      const there = `http://${o.host === '0.0.0.0' ? 'localhost' : o.host}:${o.port}`, running = await fetch(`${there}/api/hub/world`).then((r) => r.ok, () => false);
+      if (running) { console.log(`Battle Map is already running at ${there}`); openIt(there); process.exit(0); }
+      console.error(`Port ${o.port} is in use by something else. Try --port ${o.port + 1}.`); process.exit(1);
+    }
+    console.error(e.message); process.exit(1);
+  }
   console.log(`Battle Map (all your repos) at ${hi.url}   data: ${dataDir}`);
   if (o.host !== '127.0.0.1' && o.host !== 'localhost') console.warn('Warning: bound to a non-local address. There is no login; anyone who can reach this port can see your PRs and use your Jira token.');
-  if (o.open) { const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'; spawn(cmd, process.platform === 'win32' ? ['/c', 'start', hi.url] : [hi.url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref(); }
+  openIt(hi.url);
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, async () => { await hub.close(); process.exit(0); });
   await new Promise(() => {});   // serve until signalled
 }
