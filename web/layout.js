@@ -59,8 +59,11 @@ export function buildLayout(files, world = WORLD) {
   const sizeOf = (n) => n.files.reduce((a, f) => a + Math.max(1, f.loc), 0) + [...n.dirs.values()].reduce((a, d) => a + sizeOf(d), 0);
 
   function place(n, x, y, w, h, depth) {
-    const pad = depth === 0 ? 0 : Math.max(1.5, 7 - depth * 1.5);
-    const head = depth === 0 ? 0 : Math.max(5, 20 - depth * 4);
+    // The padding and the room for a district's name are fixed sizes, so in a small district they could be bigger than the
+    // district itself and swallow every file in it (a repo with many folders came out with no buildings at all). They never take more
+    // than a tenth of a side, or a fifth of the height: what is left always has room for the files.
+    const pad = depth === 0 ? 0 : Math.min(Math.max(1.5, 7 - depth * 1.5), w * 0.1, h * 0.1);
+    const head = depth === 0 ? 0 : Math.min(Math.max(5, 20 - depth * 4), h * 0.2);
     if (depth > 0) plates.push({ name: n.name, path: n.path, depth, x, y, w, h, hue: 0 });
     const items = [
       ...[...n.dirs.values()].map((d) => ({ kind: 'dir', key: 'd:' + d.path, node: d, value: sizeOf(d) })),

@@ -72,3 +72,8 @@ test('different repos look different, and a repo always looks the same', () => {
   const x = [{ path: 'a/b.ts', loc: 100, complexity: 10 }, { path: 'a/c.ts', loc: 300, complexity: 20 }], y = [{ path: 'q/r.ts', loc: 100, complexity: 10 }, { path: 'q/s.ts', loc: 300, complexity: 20 }];
   assert.deepEqual(cityBoxes(x), cityBoxes(x)); assert.notDeepEqual(cityBoxes(x).boxes.map((b) => b.hue), cityBoxes(y).boxes.map((b) => b.hue));
 });
+
+test('a repo with a great many folders still has a city: the layout never drops files (it once drew 0 buildings for 3,000 files in 600 folders)', () => {
+  const F = Array.from({ length: 3000 }, (_, i) => ({ path: `d${i % 600}/s${i % 7}/f${i}.ts`, loc: 5 + ((i * 7919) % 700), complexity: i % 30 }));
+  for (const maxFiles of [350, 130, 80]) { const c = cityBoxes(F, { maxFiles }); assert.equal(c.count, maxFiles); assert.ok(c.boxes.length >= maxFiles * 0.5, `${c.boxes.length} boxes for ${maxFiles} files`); sound(c, `many folders ${maxFiles}`); }
+});
