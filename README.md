@@ -104,12 +104,16 @@ web/main.js             panels, settings, Jira actions
 
 ## Choosing what to track
 
+![Opt-in tracking: the WATCHING pill, cyan rims on watched files, and a rule tag on each card](docs/screenshots/tracking.png)
+
 The feed is the pool of everything open; the map only draws what you track, so a busy monorepo stays readable. Your own PRs (Settings > Display > Identity) are always tracked. Everything else is opt-in, from **+ TRACK PRS** at the end of the PR tray:
 
 * **By link.** Paste a PR URL, `#123` or a number. If the PR is not in the feed yet, it is tracked as soon as it shows up.
 * **By author.** "Track everything maya opens", from the list or a rule.
 * **By path.** "Track any PR that touches `packages/billing/`". A plain path covers that file or folder, `*` stays inside one folder, `**` crosses folders. You can also click a file on the map and choose WATCH FILE or WATCH FOLDER. This is the one for teams that own part of a repo.
 * **From the list.** Every untracked open PR, most recently updated first, with a filter by text and author.
+
+![The track dialog: link, rules with live counts, and the untracked PRs in the feed](docs/screenshots/track-dialog.png)
 
 **Reminders, so rules never surprise you.** A cyan `◉ WATCHING` pill at the top lists your rules (click it to edit them). Every file a path rule covers gets a cyan rim on the map, even with no PR on it (Layers > Mark watched files turns that off). A PR that a rule tracked carries a cyan tag naming the rule, and a toast says so when a rule newly pulls PRs in.
 
@@ -128,10 +132,18 @@ Binds to 127.0.0.1. Writes need an `X-Battlemap` header and a matching Origin, a
 ## Development
 
 ```
+npm install      # also installs Playwright, which the e2e tests and screenshot script use
 npm test         # unit + server + scene wiring tests (no browser needed)
 npm run e2e      # drives the real UI in Chrome: Jira panels against the mock, then PR tracking end to end
-                 # (needs Playwright + Chrome; set TMPDIR to keep its scratch files somewhere of your choosing)
 ```
 
-`web/layout.js` (treemap) and `web/spires.js` (diff layer plan) are pure and unit tested; `web/scene.js` is the Three.js glue.
-`e2e/shot2.mjs` renders screenshots, for example `node e2e/shot2.mjs shot:overview` writes `/tmp/overview.png`.
+The e2e tests need Chrome (set `CHROME` if it is not at `/usr/bin/google-chrome`); they render WebGL in software, so they work on a machine with no GPU. They write scratch files to the system temp directory; set `TMPDIR` to put them elsewhere. CI runs both `npm test` and `npm run e2e`.
+
+`web/layout.js` (treemap), `web/spires.js` (diff layer plan) and `web/sigil.js` (flag identity) are pure and unit tested; `web/scene.js` is the Three.js glue. `server/watch.js` (what is tracked) is pure and unit tested too.
+
+The screenshots above are generated, not hand-made. `e2e/shot2.mjs` runs against the mock Jira and sets up the scenes itself:
+
+```
+SHOTS_DIR=docs/screenshots node e2e/shot2.mjs shot:overview
+SHOTS_DIR=docs/screenshots node e2e/shot2.mjs feed:sample rule:author:kofi rule:path:packages/core/domain/ pick:#2279 feed:sample-without-#2284 wait:2500 shot:tracking
+```
