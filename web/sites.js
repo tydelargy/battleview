@@ -67,25 +67,25 @@ export function tapeFloor({ x, y, w, d }, z0, h) {
  * Layering (see CLAUDE.md): ledgers are thicker than poles, the top ring thicker still and ending exactly at `top` with
  * the poles stopping inside it, and ring corners butt instead of overlapping, so no two faces ever share a plane.
  */
-export function scaffoldParts(rect, top, { pad = 0.5, lift = 3.2, maxPoles = 28, z0 = 0, ground = true, t: thick = null, braces = 8 } = {}) {
+export function scaffoldParts(rect, top, { pad = 0.5, lift = 3.2, maxPoles = 28, z0 = 0, ground = true, t: thick = null, braces = 8, tone = 'add', ring = 'status' } = {}) {
   const x0 = rect.x - pad, y0 = rect.y - pad, x1 = rect.x + rect.w + pad, y1 = rect.y + rect.h + pad, W = x1 - x0, D = y1 - y0;
   const per = 2 * (W + D), step = Math.max(2.6, per / maxPoles), t = thick ?? clamp(Math.max(W, D) * 0.014, 0.4, 1.1), parts = [];
   const nx = Math.max(1, Math.round(W / step)), ny = Math.max(1, Math.round(D / step));
   const thL = t + Math.max(0.2, t * 0.3), thT = t + Math.max(0.4, t * 0.9);       // ledger, top ring
   const poleH = Math.max(0.1, top - thT * 0.6);                                  // stops inside the top ring
-  const pole = (px, py) => parts.push({ x: px, y: py, w: t, d: t, z: z0, h: poleH, tone: 'add', ground });
+  const pole = (px, py) => parts.push({ x: px, y: py, w: t, d: t, z: z0, h: poleH, tone, ground });
   for (let i = 0; i <= nx; i++) { pole(x0 + (W * i) / nx, y0); pole(x0 + (W * i) / nx, y1); }
   for (let j = 1; j < ny; j++) { pole(x0, y0 + (D * j) / ny); pole(x1, y0 + (D * j) / ny); }
   const levels = Math.max(1, Math.round(top / lift));
   for (let k = 1; k <= levels; k++) {
-    const th = k === levels ? thT : thL, z = z0 + (top * k) / levels - th, tone = k === levels ? 'status' : 'add', sideLen = Math.max(0.1, D - th);
-    parts.push({ x: (x0 + x1) / 2, y: y0, w: W + th, d: th, z, h: th, tone, ground }, { x: (x0 + x1) / 2, y: y1, w: W + th, d: th, z, h: th, tone, ground },
-      { x: x0, y: (y0 + y1) / 2, w: th, d: sideLen, z, h: th, tone, ground }, { x: x1, y: (y0 + y1) / 2, w: th, d: sideLen, z, h: th, tone, ground });
+    const th = k === levels ? thT : thL, z = z0 + (top * k) / levels - th, tn = k === levels ? ring : tone, sideLen = Math.max(0.1, D - th);
+    parts.push({ x: (x0 + x1) / 2, y: y0, w: W + th, d: th, z, h: th, tone: tn, ground }, { x: (x0 + x1) / 2, y: y1, w: W + th, d: th, z, h: th, tone: tn, ground },
+      { x: x0, y: (y0 + y1) / 2, w: th, d: sideLen, z, h: th, tone: tn, ground }, { x: x1, y: (y0 + y1) / 2, w: th, d: sideLen, z, h: th, tone: tn, ground });
   }
   // diagonal braces, one per lift on each face, alternating direction, so it reads as scaffolding and not a fence
   const lh = top / levels, bt = t * 0.6;
   for (let k = 0; k < Math.min(levels, braces); k++) {
-    const z = z0 + lh * (k + 0.5), sign = k % 2 ? -1 : 1, brace = (cx, cy, len, along) => ({ x: cx, y: cy, z, len: Math.hypot(len, lh), t: bt, along, angle: sign * Math.atan2(lh, len), tone: 'add', diag: true, ground });
+    const z = z0 + lh * (k + 0.5), sign = k % 2 ? -1 : 1, brace = (cx, cy, len, along) => ({ x: cx, y: cy, z, len: Math.hypot(len, lh), t: bt, along, angle: sign * Math.atan2(lh, len), tone, diag: true, ground });
     parts.push(brace((x0 + x1) / 2, y0, W, 'x'), brace((x0 + x1) / 2, y1, W, 'x'), brace(x0, (y0 + y1) / 2, D, 'y'), brace(x1, (y0 + y1) / 2, D, 'y'));
   }
   return parts;
@@ -126,19 +126,16 @@ export function condemnedParts(shell, { tone = 'tape', rubble = true } = {}) {
 }
 
 /**
- * A new file's building, still being built, standing on a lot (centre x, y and size w, d): a flat pad, a scaffold frame round the
- * walls, a ghost body (drawn see-through) and a small crane on top. The ghost is as tall as the lines added on the diff scale,
- * so a big new file is a big site. `z0` lifts the whole site (the hovering variants stand it above the district).
+ * A building that is not there yet (or not there any more): an empty scaffold frame standing where it will be, as big as the
+ * building the file would be (its footprint and height come from the same shape rules as any building, see building.js), on a flat
+ * pad. Green (`tone` 'add') for a new file; yellow ('move') for the place a moved file is going to. Nothing fills it, so it reads as
+ * "a lot, ready to build", and its size says how big the file is. Everything stands clear of itself (CLAUDE.md, Layering).
  */
-export function ghostParts(lot, { add = 1, heightOf = defaultHeight, z0 = 0 } = {}) {
-  const h = Math.max(FLOOR_H, heightOf(add)), pad = 0.2, parts = [], { x, y, w, d } = lot, rect = { x: x - w / 2, y: y - d / 2, w, h: d };
-  parts.push({ x, y, w: w + 0.6, d: d + 0.6, z: z0, h: pad, tone: 'addPad', ground: !z0 });
-  const bx = Math.max(0.5, w - 1.2), bd = Math.max(0.5, d - 1.2);
-  parts.push({ x, y, w: bx, d: bd, z: z0 + pad, h, tone: 'ghost' });                                         // the building that will be
-  parts.push(...scaffoldParts(rect, h, { pad: 0.35, lift: FLOOR_H, z0: z0 + pad, ground: false, t: clamp(Math.min(w, d) * 0.05, 0.2, 0.45), braces: Math.ceil(h / FLOOR_H), maxPoles: 16 }));
-  const ch = clamp(h * 0.45, 1.6, 9);
-  parts.push(...craneParts({ x, y, w: Math.max(1, bx * 0.6), d: Math.max(1, bd * 0.6) }, z0 + pad + h + 0.3, ch).filter((p) => p.tone !== 'pad'));
-  return { parts, top: z0 + pad + h + 0.3 + ch };
+export function frameParts(shell, { tone = 'add' } = {}) {
+  const { rect } = shell, H = Math.max(FLOOR_H, shell.H ?? shell.h), parts = [], padTone = tone === 'move' ? 'movePad' : 'addPad';
+  parts.push({ x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w + 1.2, d: rect.h + 1.2, z: 0, h: 0.2, tone: padTone, ground: true });
+  parts.push(...scaffoldParts(rect, H, { pad: 0.5, lift: FLOOR_H * 1.3, z0: 0.2, ground: true, t: clamp(Math.max(rect.w, rect.h) * 0.014, 0.3, 0.9), braces: Math.ceil(H / (FLOOR_H * 1.3)), maxPoles: 24, tone, ring: tone }));
+  return { parts, top: H + 0.2 };
 }
 
 /** One floor of the red-taped stack. Floors are all this tall, and there are as many as the deleted lines need. */
@@ -156,7 +153,7 @@ const floorsFor = (n, heightOf) => (n > 0 ? clamp(Math.round(heightOf(n) / FLOOR
  */
 export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = 'crates' } = {}) {
   if (shell && col.change === 'removed') return condemnedParts({ ...shell, id: col.path });          // the file is being deleted: the whole building is condemned
-  if (shell && col.change === 'moved-out') return condemnedParts(shell, { tone: 'move', rubble: false });   // the file is moving: its old building is taped in amber
+  if (shell && col.change === 'moved-out') return { parts: scaffoldParts(shell.rect, shell.H ?? shell.h, { pad: 0.5, tone: 'move', ring: 'move' }), top: shell.H ?? shell.h };   // the file is moving: its old building is wrapped in yellow scaffolding
   const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
   if (col.focused && focusStyle === 'lines' && shell) return lineBands(col, shell);
   if (col.focused && focusStyle === 'crates') return crates(col, slot, heightOf);

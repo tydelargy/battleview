@@ -151,7 +151,7 @@ test('layering: belts, rails, scaffolding, crates, floors and cranes never put t
 });
 
 // ---- files that go, move and come: condemned buildings, amber move tape, construction sites ----
-import { condemnedParts, ghostParts } from '../web/sites.js';
+import { condemnedParts, frameParts } from '../web/sites.js';
 test('a condemned building: tape X on every wall, hazard bands, rubble beside it; nothing in a shared plane, nothing floating', () => {
   for (const shell of [{ rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14, id: 'a/b.ts' }, { rect: { x: 0, y: 0, w: 4, h: 3 }, h: 3 }, { rect: { x: 5, y: 5, w: 90, h: 60 }, h: 40, id: 'big' }]) {
     const { parts, top } = condemnedParts(shell), diag = parts.filter((p) => p.diag);
@@ -167,9 +167,11 @@ test('a condemned building: tape X on every wall, hazard bands, rubble beside it
   assert.notDeepEqual(condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'one' }).parts.filter((p) => p.tone.startsWith('rubble')), condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'two' }).parts.filter((p) => p.tone.startsWith('rubble')), 'and different for another file');
 });
 
-test('a building moving out: the same frame in amber, with no rubble', () => {
-  const { parts } = condemnedParts({ rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14 }, { tone: 'move', rubble: false });
-  assert.ok(parts.every((p) => p.tone === 'move') && parts.length === 8 + 8); assert.deepEqual(coplanarOverlaps(parts), []);
+test('a building moving out is wrapped in yellow scaffolding: poles and ledgers all the way up, nothing but yellow', () => {
+  const shell = { rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14 }, { parts, top } = siteParts({ x: 20, y: 20, w: 8, d: 5, z0: 14, total: 9, parts: [], add: 0, del: 0, focused: false, change: 'moved-out' }, shell, { heightOf: height });
+  assert.ok(parts.every((p) => p.tone === 'move') && parts.length > 12); assert.equal(top, 14); assert.deepEqual(coplanarOverlaps(parts), []);
+  assert.ok(Math.max(...parts.filter((p) => !p.diag).map((p) => p.z + p.h)) <= 14 + 1e-9 && parts.some((p) => !p.diag && p.h > 12), 'as tall as the building');
+  const xs = parts.filter((p) => !p.diag).flatMap((p) => [p.x - p.w / 2, p.x + p.w / 2]); assert.ok(Math.min(...xs) < 10 && Math.max(...xs) > 40, 'wrapped around the building, a little outside its walls');
 });
 
 test('a column for a removed file or the old home of a move becomes that building taped, whatever the focus view', () => {
@@ -183,18 +185,18 @@ test('a column for a removed file or the old home of a move becomes that buildin
   assert.ok(siteParts({ ...base, change: 'removed' }, null, { heightOf: height }).parts.length > 0, 'with no building shape it falls back to the ordinary column rather than throwing');
 });
 
-test('a construction site for a new file: pad, scaffold, ghost body and a crane; as tall as the lines added; layered', () => {
-  const lot = { x: 30, y: 12, w: 8, d: 6 };
-  for (const add of [1, 40, 900, 100000]) for (const z0 of [0, 25]) {
-    const { parts, top } = ghostParts(lot, { add, heightOf: height, z0 }), body = parts.find((p) => p.tone === 'ghost');
-    assert.ok(parts.some((p) => p.tone === 'addPad') && parts.some((p) => p.tone === 'add' || p.tone === 'status') && parts.some((p) => p.tone === 'statusDark') && body, 'pad, scaffold, crane and ghost');
-    assert.ok(Math.abs(body.h - Math.max(FLOOR_H, height(add))) < 1e-9, 'the ghost is as tall as the diff scale says'); assert.equal(body.z, z0 + 0.2);
-    assert.ok(top > body.z + body.h && Number.isFinite(top)); assert.deepEqual(coplanarOverlaps(parts), [], `layering at +${add}`);
-    assert.ok(parts.every((p) => p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= z0 - 1e-9), 'all on or above the site');
-    assert.ok(parts.filter((p) => !p.diag).every((p) => Math.abs(p.x - lot.x) <= lot.w / 2 + 1.2 && Math.abs(p.y - lot.y) <= lot.d / 2 + 1.2), 'the site stays on its lot, give or take the scaffold');
+test('a lot for a new file: an empty scaffold frame as big as the building it will be, on a flat pad, green; yellow for the place a move is going to', () => {
+  for (const shell of [{ rect: { x: 30, y: 12, w: 40, h: 22 }, h: 20, H: 26 }, { rect: { x: 0, y: 0, w: 3, h: 2 }, h: 3 }, { rect: { x: 5, y: 5, w: 120, h: 80 }, h: 70, H: 80 }]) for (const tone of ['add', 'move']) {
+    const { parts, top } = frameParts(shell, { tone }), H = Math.max(FLOOR_H, shell.H ?? shell.h);
+    assert.ok(parts.some((p) => p.tone === (tone === 'move' ? 'movePad' : 'addPad')), 'a flat pad'); assert.ok(parts.filter((p) => p.tone === tone).length > 8, `${tone} poles, ledgers and braces`);
+    assert.ok(parts.filter((p) => p.tone !== 'movePad' && p.tone !== 'addPad').every((p) => p.tone === tone), 'one colour, ring included');
+    assert.ok(!parts.some((p) => ['ghost', 'status', 'statusDark', 'metal'].includes(p.tone)), 'empty: no body, no crane');
+    assert.ok(Math.abs(top - (H + 0.2)) < 1e-9 && Math.abs(Math.max(...parts.filter((p) => !p.diag).map((p) => p.z + p.h)) - (H + 0.2)) < 1e-6, 'exactly as tall as the building would be');
+    assert.deepEqual(coplanarOverlaps(parts), [], `layering ${tone}`);
+    const xs = parts.filter((p) => !p.diag).flatMap((p) => [p.x - p.w / 2, p.x + p.w / 2]); assert.ok(Math.min(...xs) < shell.rect.x && Math.max(...xs) > shell.rect.x + shell.rect.w, 'standing round the plot');
+    assert.ok(parts.every((p) => p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= 0));
   }
-  const small = ghostParts(lot, { add: 1, heightOf: height }).parts.find((p) => p.tone === 'ghost'), big = ghostParts(lot, { add: 5000, heightOf: height }).parts.find((p) => p.tone === 'ghost');
-  assert.ok(big.h > small.h * 3, 'bigger file, taller site');
+  const small = frameParts({ rect: { x: 0, y: 0, w: 10, h: 10 }, h: 8 }), big = frameParts({ rect: { x: 0, y: 0, w: 10, h: 10 }, h: 60 }); assert.ok(big.top > small.top * 4, 'a bigger building, a taller frame');
 });
 
 test('planSpires: a removed file is a column on its building (flagged), a move puts a column on the old home, and a new file has none (it has no place yet)', () => {

@@ -191,8 +191,16 @@ test('scene wiring with a stand-in three', async () => {
     { id: '#9002', title: 'deletes one', author: 'y', status: 'review_requested', files: [{ path: 'packages/core/domain/pricing.ts', add: 0, del: 400, change: 'removed' }] },
     { id: '#9003', title: 'moves one', author: 'z', status: 'review_requested', files: [{ path: 'packages/core/new-home/tax.ts', add: 0, del: 0, change: 'renamed', from: 'packages/core/domain/tax.ts' }] }]);
   sc.setPRs(ch, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); await run(4);
-  assert.equal(sc.info().ghosts, 2, 'the new file and the moved-in file have no building yet'); assert.equal(sc.info().placed, 0, 'and nothing has been asked to place them'); assert.equal(sc.info().moves, 0);
-  assert.equal(sc.info().columns, 2, 'but the deleted file and the old home of the move are columns on real buildings'); assert.equal(sc.info().flags, 3, 'every PR is on the map somewhere, including the one that only adds a file');
+  const baseLeaves = 64;
+  assert.equal(sc.info().ghosts, 2, 'the new file and the moved-in file each have a plot, with nothing focused'); assert.equal(sc.info().placed, 2); assert.equal(sc.info().moves, 1, 'and the move has its arc');
+  const where = () => JSON.stringify(sc.layout().leaves.map((l) => [l.path, l.x, l.y, l.w, l.h]));
+  assert.equal(sc.layout().leaves.length, baseLeaves + 2, 'the map has room made for both'); assert.ok(sc.layout().leaves.filter((l) => l.ghost).length === 2);
+  const still = where();
+  for (const focusId of ['#9001', '#9002', '#9003', null]) { sc.setPRs(ch, { mode: 'sqrt', focusId, visible: null, fog: true, statusColors: {} }); await run(3); assert.equal(where(), still, `focusing ${focusId} moves nothing`); assert.equal(sc.info().placed, 2); }
+  sc.setPRs(ch, { mode: 'sqrt', focusId: null, visible: new Set(['#9002']), fog: true, statusColors: {} }); await run(3); assert.equal(where(), still, 'filtering PRs out moves nothing either'); assert.equal(sc.info().ghosts, 0, 'though their plots are not drawn');
+  sc.setPRs(ch, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); await run(3);
+  assert.equal(sc.info().columns, 2, 'the deleted file and the old home of the move are columns on real buildings'); assert.equal(sc.info().flags, 3, 'every PR is on the map somewhere, including the one that only adds a file');
+  sc.setPRs(ch.slice(1), { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); await run(3); assert.equal(sc.layout().leaves.length, baseLeaves + 1, 'untrack the PR that adds a file and its plot goes: the only thing that changes the map');
   sc.setPRs([], { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); assert.equal(sc.info().ghosts, 0); assert.equal(sc.info().flags, 0);
   sc.dispose();
 });
