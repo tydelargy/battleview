@@ -149,3 +149,58 @@ test('layering: belts, rails, scaffolding, crates, floors and cranes never put t
   assert.deepEqual(coplanarOverlaps(scaffoldParts({ x: 0, y: 0, w: 20, h: 12 }, 15)), [], 'scaffold');
   assert.deepEqual(coplanarOverlaps(scaffoldParts({ x: 0, y: 0, w: 6, h: 6 }, 7, { pad: 0, lift: 2.4, z0: 4, ground: false, t: 0.3 })), [], 'small scaffold tower');
 });
+
+// ---- files that go, move and come: condemned buildings, amber move tape, construction sites ----
+import { condemnedParts, ghostParts } from '../web/sites.js';
+test('a condemned building: tape X on every wall, hazard bands, rubble beside it; nothing in a shared plane, nothing floating', () => {
+  for (const shell of [{ rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14, id: 'a/b.ts' }, { rect: { x: 0, y: 0, w: 4, h: 3 }, h: 3 }, { rect: { x: 5, y: 5, w: 90, h: 60 }, h: 40, id: 'big' }]) {
+    const { parts, top } = condemnedParts(shell), diag = parts.filter((p) => p.diag);
+    assert.equal(diag.length, 8, 'two diagonals on each of four walls'); assert.equal(top, shell.h);
+    assert.equal(parts.filter((p) => p.tone === 'tape' && !p.diag).length, 8, 'a band round the base and round the top, four boxes each');
+    assert.ok(parts.filter((p) => p.tone === 'rubble' || p.tone === 'rubble2').length >= 6, 'a heap of rubble');
+    assert.deepEqual(coplanarOverlaps(parts), [], 'layering');
+    for (const p of parts.filter((q) => q.tone === 'rubble' || q.tone === 'rubble2')) assert.ok(p.y - p.d / 2 > shell.rect.y + shell.rect.h + 0.5, 'rubble sits beyond the base band');
+    assert.ok(parts.every((p) => p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= 0), 'sound boxes');
+    assert.ok(Math.max(...parts.filter((p) => !p.diag).map((p) => p.z + p.h)) <= shell.h + 1e-9, 'never taller than the building');
+  }
+  assert.deepEqual(condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'same' }), condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'same' }), 'the rubble is the same every time');
+  assert.notDeepEqual(condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'one' }).parts.filter((p) => p.tone.startsWith('rubble')), condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'two' }).parts.filter((p) => p.tone.startsWith('rubble')), 'and different for another file');
+});
+
+test('a building moving out: the same frame in amber, with no rubble', () => {
+  const { parts } = condemnedParts({ rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14 }, { tone: 'move', rubble: false });
+  assert.ok(parts.every((p) => p.tone === 'move') && parts.length === 8 + 8); assert.deepEqual(coplanarOverlaps(parts), []);
+});
+
+test('a column for a removed file or the old home of a move becomes that building taped, whatever the focus view', () => {
+  const shell = { rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14 }, base = { x: 20, y: 20, w: 8, d: 5, z0: 14, total: 9, parts: [{ dz: 0, h: 9, kind: 'pr' }], add: 0, del: 90, focused: false, path: 'a/gone.ts' };
+  for (const focused of [false, true]) for (const focusStyle of ['crates', 'lines', 'facade']) {
+    const gone = siteParts({ ...base, focused, change: 'removed' }, shell, { heightOf: height, focusStyle }), mv = siteParts({ ...base, focused, change: 'moved-out' }, shell, { heightOf: height, focusStyle });
+    assert.ok(gone.parts.some((p) => p.tone === 'tape') && gone.parts.some((p) => p.tone === 'rubble' || p.tone === 'rubble2') && !gone.parts.some((p) => p.tone === 'status'), 'no crane on a building that is coming down');
+    assert.ok(mv.parts.every((p) => p.tone === 'move'));
+  }
+  assert.ok(siteParts({ ...base, change: 'modified', add: 20, del: 0 }, shell, { heightOf: height }).parts.some((p) => p.tone === 'status'), 'a modified file is unchanged: a crane');
+  assert.ok(siteParts({ ...base, change: 'removed' }, null, { heightOf: height }).parts.length > 0, 'with no building shape it falls back to the ordinary column rather than throwing');
+});
+
+test('a construction site for a new file: pad, scaffold, ghost body and a crane; as tall as the lines added; layered', () => {
+  const lot = { x: 30, y: 12, w: 8, d: 6 };
+  for (const add of [1, 40, 900, 100000]) for (const z0 of [0, 25]) {
+    const { parts, top } = ghostParts(lot, { add, heightOf: height, z0 }), body = parts.find((p) => p.tone === 'ghost');
+    assert.ok(parts.some((p) => p.tone === 'addPad') && parts.some((p) => p.tone === 'add' || p.tone === 'status') && parts.some((p) => p.tone === 'statusDark') && body, 'pad, scaffold, crane and ghost');
+    assert.ok(Math.abs(body.h - Math.max(FLOOR_H, height(add))) < 1e-9, 'the ghost is as tall as the diff scale says'); assert.equal(body.z, z0 + 0.2);
+    assert.ok(top > body.z + body.h && Number.isFinite(top)); assert.deepEqual(coplanarOverlaps(parts), [], `layering at +${add}`);
+    assert.ok(parts.every((p) => p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= z0 - 1e-9), 'all on or above the site');
+    assert.ok(parts.filter((p) => !p.diag).every((p) => Math.abs(p.x - lot.x) <= lot.w / 2 + 1.2 && Math.abs(p.y - lot.y) <= lot.d / 2 + 1.2), 'the site stays on its lot, give or take the scaffold');
+  }
+  const small = ghostParts(lot, { add: 1, heightOf: height }).parts.find((p) => p.tone === 'ghost'), big = ghostParts(lot, { add: 5000, heightOf: height }).parts.find((p) => p.tone === 'ghost');
+  assert.ok(big.h > small.h * 3, 'bigger file, taller site');
+});
+
+test('planSpires: a removed file is a column on its building (flagged), a move puts a column on the old home, and a new file has none (it has no place yet)', () => {
+  const layout = buildLayout(sampleFiles()), paths = layout.leaves.map((l) => l.path);
+  const prs = [{ id: '#1', status: 'review_requested', files: [{ path: paths[0], add: 0, del: 50, change: 'removed' }, { path: 'brand/new/file.ts', add: 60, del: 0, change: 'added' }, { path: 'moved/to/here.ts', add: 0, del: 0, change: 'renamed', from: paths[1] }, { path: 'moved/nowhere.ts', add: 0, del: 0, change: 'renamed', from: 'not/on/map.ts' }, { path: paths[2], add: 5, del: 1 }] }];
+  const cols = planSpires({ byPath: layout.byPath, prs });
+  assert.deepEqual(cols.map((c) => [c.path, c.change]).sort((a, b) => (a[0] < b[0] ? -1 : 1)), [[paths[0], 'removed'], [paths[1], 'moved-out'], [paths[2], 'modified']].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+  assert.equal(cols.find((c) => c.path === paths[1]).movedTo, 'moved/to/here.ts');
+});

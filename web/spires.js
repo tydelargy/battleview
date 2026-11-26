@@ -95,9 +95,14 @@ export function planSpires({ byPath, prs, mode = 'sqrt', focusId = null, visible
   for (const p of prs) {
     if (visible && !visible.has(p.id)) continue;
     for (const f of p.files) {
-      if (!byPath.has(f.path)) continue;
-      if (!perFile.has(f.path)) perFile.set(f.path, []);
-      perFile.get(f.path).push({ pr: p, f });
+      let path = f.path, entry = f;
+      if (!byPath.has(path)) {
+        // A file the PR moves: the map only knows its old home, so that is where the building stands that is moving out.
+        // (A file the PR adds is not on the map; web/changes.js and the placement code deal with those.)
+        if (f.change === 'renamed' && f.from && byPath.has(f.from)) { path = f.from; entry = { ...f, path: f.from, moved: f.path }; } else continue;
+      }
+      if (!perFile.has(path)) perFile.set(path, []);
+      perFile.get(path).push({ pr: p, f: entry });
     }
   }
   const columns = [];
@@ -119,7 +124,7 @@ export function planSpires({ byPath, prs, mode = 'sqrt', focusId = null, visible
       const focused = e.pr.id === focusId;
       const { total, parts } = columnParts(e, mode, focused);
       const lines = e.f.add + e.f.del;
-      columns.push({ ...boxes[i], z0: leaf.height, total, parts, prId: e.pr.id, path, focused, dimmed: !!focusId && !focused, status: e.pr.status, add: e.f.add, del: e.f.del, lines, pct: lines / Math.max(1, leaf.loc), sharedWith: entries.length - 1, hunks: e.f.hunks || null, synthetic: !!e.f.syntheticHunks, loc: leaf.loc });
+      columns.push({ ...boxes[i], z0: leaf.height, total, parts, prId: e.pr.id, path, focused, dimmed: !!focusId && !focused, status: e.pr.status, add: e.f.add, del: e.f.del, lines, pct: lines / Math.max(1, leaf.loc), sharedWith: entries.length - 1, hunks: e.f.hunks || null, synthetic: !!e.f.syntheticHunks, loc: leaf.loc, change: e.f.moved ? 'moved-out' : e.f.change === 'removed' ? 'removed' : 'modified', ...(e.f.moved ? { movedTo: e.f.moved } : {}) });
     });
   }
   return columns;

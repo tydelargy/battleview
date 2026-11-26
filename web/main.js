@@ -200,6 +200,12 @@ async function loadTransitions(prId) {
   renderFocus();
 }
 
+/** NEW / DELETED / MOVED beside a file in the PR panel, so a file the map has no building for is still plainly there. */
+function fileTag(f) {
+  const onMap = state.scene?.layout()?.byPath;
+  const [text, cls, tip] = f.change === 'removed' ? ['DELETED', 'del', 'This PR deletes the file'] : f.change === 'renamed' && f.from ? ['MOVED', 'mv', `Moved from ${f.from}`] : (f.change === 'added' || (onMap && !onMap.has(f.path))) ? ['NEW', 'add', 'A new file: not on the map until it is merged'] : [null];
+  return text ? h('i', { class: `chg ${cls}`, title: tip }, text) : null;
+}
 function renderFocus() {
   const box = $('focus'), s = state.snap, pr = s.prs.find((p) => p.id === state.sel);
   if (!pr) { box.hidden = true; return; }
@@ -249,7 +255,7 @@ function renderFocus() {
       h('div', { class: 'files' }, pr.files.slice().sort((a, b) => b.add + b.del - (a.add + a.del)).map((f) => {
         const name = f.path.split('/').pop(), dir = f.path.slice(0, f.path.length - name.length);
         return h('button', { class: 'frow', onclick: () => state.scene?.flyToFile(f.path), onmouseenter: () => state.scene?.setHighlight([f.path]), onmouseleave: () => state.scene?.setHighlight([]), onfocus: () => state.scene?.setHighlight([f.path]), onblur: () => state.scene?.setHighlight([]) },
-          h('span', { class: 'nm' }, h('small', null, dir), name), h('span', { class: 'ct' }, h('span', { class: 'a' }, `+${f.add}`), h('span', { class: 'd' }, `−${f.del}`)),
+          h('span', { class: 'nm' }, h('small', null, dir), name, fileTag(f)), h('span', { class: 'ct' }, h('span', { class: 'a' }, `+${f.add}`), h('span', { class: 'd' }, `−${f.del}`)),
           h('div', { class: 'bar', style: `width:${((f.add + f.del) / maxFile) * 100}%` }, h('i', { class: 'a', style: `width:${(f.add / (f.add + f.del || 1)) * 100}%` }), h('i', { class: 'd', style: `width:${(f.del / (f.add + f.del || 1)) * 100}%` })));
       }))),
     h('div', { class: 'blk' }, h('h3', null, 'JIRA'), ticket),

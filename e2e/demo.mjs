@@ -42,18 +42,18 @@ try {
     await page.click('#wadd-cancel');
     await addAt(w.slots[0], 'https://github.com/acme/billing-api');
     await waitFor(() => window.battlemap.world.info().cities === 2, null, 'billing-api appears');
-    w = await world(); const b = w.cities.find((c) => c.key === 'acme/billing-api'); assert.ok(b); assert.equal(b.files, 28); assert.equal(b.estimated, true);
+    w = await world(); const b = w.cities.find((c) => c.key === 'acme/billing-api'); assert.ok(b); assert.equal(b.files, 25); assert.equal(b.estimated, true);
     await addAt(w.slots[1], 'acme/mobile-app'); await waitFor(() => window.battlemap.world.info().cities === 3, null, 'mobile-app appears');
   });
 
   await step('going into the new city: its own map, its own PRs, your PRs tracked, the mock Jira linked', async () => {
     const b = (await world()).cities.find((c) => c.key === 'acme/billing-api'), p = await screen(b);
     assert.equal((await info()).cards, 3, 'all three repos have a card');
-    await waitFor(() => document.querySelector('.wcard[data-id="acme--billing-api"] .ws.mine b')?.textContent === '2', null, 'its numbers are on its card');
+    await waitFor(() => document.querySelector('.wcard[data-id="acme--billing-api"] .ws.mine b')?.textContent === '3', null, 'its numbers are on its card');
     await page.mouse.click(p.sx, p.sy); await page.waitForSelector('body.in-city .card[data-id]', { timeout: 12000 });
     assert.match(await page.textContent('#sub'), /acme\/billing-api · sizes estimated/);
-    await waitFor(() => document.querySelectorAll('.card[data-id]').length === 2, null, 'only your two PRs are tracked at first');
-    const ids = await page.$$eval('.card[data-id]', (c) => c.map((x) => x.dataset.id).sort()); assert.deepEqual(ids, ['#121', '#127']);
+    await waitFor(() => document.querySelectorAll('.card[data-id]').length === 3, null, 'only your three PRs are tracked at first');
+    const ids = await page.$$eval('.card[data-id]', (c) => c.map((x) => x.dataset.id).sort()); assert.deepEqual(ids, ['#121', '#127', '#136']);
     await waitFor(() => /ENG-433 · In Progress/.test(document.querySelector('.card[data-id="#121"] .tk')?.textContent || ''), null, 'the mock Jira ticket on #121', 12000);
   });
 
@@ -61,8 +61,8 @@ try {
     await page.click('#trackBtn'); await page.waitForSelector('#t-link'); await page.fill('#t-link', '#118'); await page.keyboard.press('Enter');
     await waitFor(() => !!document.querySelector('.card[data-id="#118"]'), null, '#118 is tracked');
     await page.keyboard.press('Escape');
-    const snap = await fetch(`${base}/r/acme--billing-api/api/snapshot`).then((r) => r.json()); assert.deepEqual(snap.prs.map((p) => p.id).sort(), ['#118', '#121', '#127']);
-    assert.equal(snap.files.length, 28); assert.ok(snap.watch.availableTotal >= 4, 'the other PRs are offered, not tracked');
+    const snap = await fetch(`${base}/r/acme--billing-api/api/snapshot`).then((r) => r.json()); assert.deepEqual(snap.prs.map((p) => p.id).sort(), ['#118', '#121', '#127', '#136']);
+    assert.equal(snap.files.length, 25); assert.ok(snap.watch.availableTotal >= 4, 'the other PRs are offered, not tracked');
     await page.click('.card[data-id="#118"]'); await page.waitForSelector('#focus .files .frow'); assert.match(await page.textContent('#focus'), /src\/tax\/round\.ts/);
     await page.keyboard.press('Escape');
   });
@@ -71,8 +71,8 @@ try {
     await page.click('#worldBtn'); await page.waitForSelector('#world:not([hidden]) canvas'); await waitFor(() => window.battlemap.world.info().cities === 3, null, 'world');
     const w = await world(), b = w.cities.find((c) => c.key === 'acme/billing-api'), m = w.cities.find((c) => c.key === 'acme/mobile-app');
     const card = '.wcard[data-id="acme--billing-api"]';
-    await waitFor(() => document.querySelector('.wcard[data-id="acme--billing-api"] .ws.tracking b')?.textContent === '3', null, 'tracking 3');
-    assert.equal(await page.textContent(`${card} .ws.mine b`), '2'); assert.equal(await page.textContent(`${card} .ws.needs b`), '5');
+    await waitFor(() => document.querySelector('.wcard[data-id="acme--billing-api"] .ws.tracking b')?.textContent === '4', null, 'tracking 4');
+    assert.equal(await page.textContent(`${card} .ws.mine b`), '3'); assert.equal(await page.textContent(`${card} .ws.needs b`), '5');
     await page.click(`${card} .whead`); await page.waitForSelector(`${card}.open #ws-go`); assert.match(await page.textContent(card), /sizes are estimated/i, 'the card says the sizes are estimates');
     assert.equal(m.stats.tracked, 0, 'mobile-app has not been opened'); let got = 0; for (let i = 0; i < 40 && got !== 1; i++) { got = (await fetch(`${base}/r/acme--mobile-app/api/snapshot`).then((r) => r.json())).prs.length; if (got !== 1) await new Promise((r) => setTimeout(r, 200)); }
     assert.equal(got, 1, 'going into it shows its own PRs, with only yours tracked');

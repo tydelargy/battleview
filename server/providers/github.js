@@ -135,7 +135,7 @@ const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
  * Rejects if the open PRs cannot be fetched, so a cron job never replaces a good feed with a bad one. Trouble with the
  * extras or with finding out who you are only adds a warning.
  */
-export async function fetchGithub({ repo = null, host = null, limit = 500, endedDays = 2, gh = 'gh', exec = defaultExec, now = Date.now() } = {}) {
+export async function fetchGithub({ repo = null, host = null, limit = 500, endedDays = 2, changes = true, gh = 'gh', exec = defaultExec, now = Date.now() } = {}) {
   const env = host ? { GH_HOST: host } : {};
   const warnings = [];
   const list = async (extra) => {
@@ -188,7 +188,56 @@ export async function fetchGithub({ repo = null, host = null, limit = 500, ended
   }
   const seen = new Set(open.map((p) => p.number));
   const prs = [...open, ...ended.filter((p) => !seen.has(p.number))].map((p) => normalisePR(p, { viewer, waitingSince: waiting.get(p.number) ?? null }));
+  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec })); }
   return { prs, viewer, warnings, counts: { open: open.length, ended: prs.length - open.length } };
+}
+
+
+// ---- what happened to each file: added, removed, renamed (and from where) or changed ----
+// `gh pr list --json files` only has paths and counts. GraphQL's changeType says added / deleted / renamed for twenty PRs
+// a request; it cannot say what a renamed file was called, so only the PRs that rename something get one REST call.
+const CHANGE_TYPES = { ADDED: 'added', COPIED: 'added', DELETED: 'removed', RENAMED: 'renamed', MODIFIED: 'modified', CHANGED: 'modified' };
+export const changesQuery = (numbers) => `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
+${numbers.filter(Number.isInteger).map((n) => `  pr${n}: pullRequest(number: ${n}) { files(first: 100) { nodes { path changeType } } }`).join('\n')}
+} }`;
+/** Map of PR number -> Map(path -> 'added' | 'removed' | 'renamed' | 'modified'), and the numbers that rename something. Pure. */
+export function changesFromGraphql(data, numbers) {
+  const out = new Map(), renamers = [];
+  for (const n of numbers) {
+    const nodes = data?.[`pr${n}`]?.files?.nodes; if (!Array.isArray(nodes)) continue;
+    const m = new Map(); for (const f of nodes) if (f?.path) m.set(f.path, CHANGE_TYPES[f.changeType] || 'modified');
+    out.set(n, m); if ([...m.values()].includes('renamed')) renamers.push(n);
+  }
+  return { out, renamers };
+}
+/** REST `pulls/N/files` lines (one JSON array per page) -> Map(new path -> previous path). Pure. */
+export function previousNames(text) {
+  const m = new Map();
+  for (const line of String(text || '').split('\n').filter(Boolean)) { let a; try { a = JSON.parse(line); } catch { continue; } for (const f of Array.isArray(a) ? a : []) if (f?.filename && f.previous_filename) m.set(f.filename, f.previous_filename); }
+  return m;
+}
+/** Add `change` (and `from`) to the files of these PRs. Trouble only costs detail, never the feed: it returns warnings. */
+export async function addFileChanges(prs, { repo, host = null, gh = 'gh', exec = defaultExec, limit = DETAIL_LIMIT } = {}) {
+  const warnings = [], env = host ? { GH_HOST: host } : {}, open = prs.filter((p) => p.files?.length && !['merged', 'closed'].includes(p.status));
+  const looked = open.slice(0, limit); if (open.length > looked.length) warnings.push(`file changes (added, removed, moved) were read for ${looked.length} of ${open.length} PRs; the rest show every file as changed`);
+  if (!looked.length) return warnings;
+  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { return [...warnings, `could not read file changes: ${e.message.split('\n')[0]}`]; }
+  let failed = 0;
+  for (let i = 0; i < looked.length; i += CHUNK) {
+    const chunk = looked.slice(i, i + CHUNK), numbers = chunk.map((p) => p.number);
+    try {
+      const out = JSON.parse(await exec(gh, ['api', 'graphql', '-f', `query=${changesQuery(numbers)}`, '-F', `owner=${owner}`, '-F', `name=${name}`], { env }));
+      const { out: byPr, renamers } = changesFromGraphql(out?.data?.repository, numbers);
+      for (const p of chunk) { const m = byPr.get(p.number); if (m) for (const f of p.files) { const c = m.get(f.path); if (c) f.change = c; } }
+      for (const n of renamers) {
+        const p = chunk.find((x) => x.number === n);
+        try { const prev = previousNames(await exec(gh, ['api', `repos/${owner}/${name}/pulls/${n}/files`, '--paginate', '--jq', '[.[] | {filename, previous_filename}]'], { env })); for (const f of p.files) if (f.change === 'renamed' && prev.get(f.path)) f.from = prev.get(f.path); }
+        catch { failed++; }
+      }
+    } catch { failed += chunk.length; }
+  }
+  if (failed) warnings.push(`could not read file changes for ${failed} PR${failed > 1 ? 's' : ''}; their new, removed and moved files show as plain changes`);
+  return warnings;
 }
 
 export const github = { name: 'github', fetch: fetchGithub };

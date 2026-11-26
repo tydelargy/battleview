@@ -319,3 +319,9 @@ body.hub:not(.in-city) .hud,body.hub:not(.in-city) #fab,body.hub:not(.in-city) #
 .wadd .sub{color:var(--dim);font-size:11px;line-height:1.45;margin:4px 0}
 
 body.hub:not(.in-city) #toast{bottom:200px}
+
+.bm-move{stroke-dasharray:10 6;stroke-width:2.6}
+.chg{font-style:normal;font:700 8.5px var(--display);letter-spacing:.08em;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:1px}
+.chg.add{background:color-mix(in srgb,var(--add) 22%,transparent);color:var(--add)}
+.chg.del{background:color-mix(in srgb,var(--del) 22%,transparent);color:var(--del)}
+.chg.mv{background:rgba(245,165,36,.2);color:#f5a524}

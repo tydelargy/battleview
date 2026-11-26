@@ -2,6 +2,7 @@
 // derives "drift" insights: places where PR reality and ticket state disagree.
 import { synthHunks } from './hunks.js';
 
+export const CHANGES = ['added', 'removed', 'renamed', 'modified'];
 export const STATUSES = ['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge', 'draft', 'merged', 'closed'];
 
 export function needsReason(p) {
@@ -26,7 +27,8 @@ export function normalisePRs(input, identity = { prAuthors: ['you'] }) {
     const files = (Array.isArray(raw.files) ? raw.files : []).filter((f) => f && f.path).map((f) => {
       const add = Math.max(0, Number(f.add) || 0), del = Math.max(0, Number(f.del) || 0);
       const real = Array.isArray(f.hunks) && f.hunks.length;
-      return { path: f.path, add, del, hunks: real ? f.hunks.map((h) => ({ add: Math.max(0, +h.add || 0), del: Math.max(0, +h.del || 0), ...(Number.isFinite(+h.start) && +h.start >= 1 ? { start: Math.floor(+h.start) } : {}) })) : synthHunks(f.path, add, del), syntheticHunks: !real };
+      const change = CHANGES.includes(f.change) ? f.change : undefined, from = change === 'renamed' && typeof f.from === 'string' && f.from && f.from !== f.path ? f.from : undefined;   // what happened to the file: added, removed, renamed (and from where) or just changed
+      return { path: f.path, ...(change ? { change } : {}), ...(from ? { from } : {}), add, del, hunks: real ? f.hunks.map((h) => ({ add: Math.max(0, +h.add || 0), del: Math.max(0, +h.del || 0), ...(Number.isFinite(+h.start) && +h.start >= 1 ? { start: Math.floor(+h.start) } : {}) })) : synthHunks(f.path, add, del), syntheticHunks: !real };
     });
     prs.push({
       id: String(raw.id), number: raw.number ?? null, title: String(raw.title || raw.id), branch: raw.branch || '', author: raw.author || 'unknown',

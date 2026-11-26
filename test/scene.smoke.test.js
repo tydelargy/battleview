@@ -56,7 +56,7 @@ test('scene wiring with a stand-in three', async () => {
   const tdir = path.join(dir, 'node_modules/three'); fs.mkdirSync(path.join(tdir, 'examples/jsm/controls'), { recursive: true });
   fs.writeFileSync(path.join(tdir, 'package.json'), JSON.stringify({ name: 'three', type: 'module', exports: { '.': './index.js', './addons/*': './examples/jsm/*' } }));
   fs.writeFileSync(path.join(tdir, 'index.js'), FAKE_THREE); fs.writeFileSync(path.join(tdir, 'examples/jsm/controls/OrbitControls.js'), FAKE_ORBIT);
-  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js', 'building.js', 'sites.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
+  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js', 'building.js', 'sites.js', 'changes.js', 'placement.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
   fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
 
   const frames = []; globalThis.requestAnimationFrame = (f) => { frames.push(f); return frames.length; };
@@ -183,5 +183,16 @@ test('scene wiring with a stand-in three', async () => {
   sc.flyToPR('#2302'); sc.flyToFile('apps/web/pages/billing.tsx'); sc.setView('2d'); sc.flyHome(); sc.setHighlight(['apps/web/pages/billing.tsx']);
   await run(6, 5000);
   assert.ok(globalThis.__renders > 10);
+
+  // files that come, go and move: a new file has no building (a ghost, and its PR still gets a flag); a deleted one is a taped building; a move arcs once something places it
+  sc.setStyle({ mode: 'full', variety: 7 });
+  const { prs: ch } = normalisePRs([
+    { id: '#9001', title: 'adds a file', author: 'x', status: 'review_requested', files: [{ path: 'brand/new/thing.ts', add: 50, del: 0, change: 'added' }] },
+    { id: '#9002', title: 'deletes one', author: 'y', status: 'review_requested', files: [{ path: 'packages/core/domain/pricing.ts', add: 0, del: 400, change: 'removed' }] },
+    { id: '#9003', title: 'moves one', author: 'z', status: 'review_requested', files: [{ path: 'packages/core/new-home/tax.ts', add: 0, del: 0, change: 'renamed', from: 'packages/core/domain/tax.ts' }] }]);
+  sc.setPRs(ch, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); await run(4);
+  assert.equal(sc.info().ghosts, 2, 'the new file and the moved-in file have no building yet'); assert.equal(sc.info().placed, 0, 'and nothing has been asked to place them'); assert.equal(sc.info().moves, 0);
+  assert.equal(sc.info().columns, 2, 'but the deleted file and the old home of the move are columns on real buildings'); assert.equal(sc.info().flags, 3, 'every PR is on the map somewhere, including the one that only adds a file');
+  sc.setPRs([], { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); assert.equal(sc.info().ghosts, 0); assert.equal(sc.info().flags, 0);
   sc.dispose();
 });

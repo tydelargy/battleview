@@ -91,6 +91,56 @@ export function scaffoldParts(rect, top, { pad = 0.5, lift = 3.2, maxPoles = 28,
   return parts;
 }
 
+/**
+ * A building that is about to go: red tape in an X across every wall, a hazard band round the base and another round the
+ * top, and rubble heaped beside it. `tone` 'move' draws the same frame in amber with no rubble, for the old home of a file
+ * that is moving out. Everything stands clear of the walls and of itself (CLAUDE.md, Layering): the tape bands are proud of the
+ * wall by different amounts, and the rubble starts beyond the base band.
+ */
+export function condemnedParts(shell, { tone = 'tape', rubble = true } = {}) {
+  const { rect } = shell, H = shell.h, parts = [], moving = tone === 'move';
+  const t = clamp(Math.max(rect.w, rect.h) * 0.03, 0.6, 1.8), band = clamp(H * 0.09, 0.9, 2.2), o1 = 0.4, o2 = 0.7;
+  const ring = (z, h, out, th) => { const x0 = rect.x - out, y0 = rect.y - out, W = rect.w + 2 * out, D = rect.h + 2 * out;
+    parts.push({ x: x0 + W / 2, y: y0, w: W, d: th, z, h, tone, ground: true }, { x: x0 + W / 2, y: y0 + D, w: W, d: th, z, h, tone, ground: true },
+      { x: x0, y: y0 + D / 2, w: th, d: Math.max(0.1, D - th), z, h, tone, ground: true }, { x: x0 + W, y: y0 + D / 2, w: th, d: Math.max(0.1, D - th), z, h, tone, ground: true }); };
+  ring(0, band, o1, 0.7); ring(Math.max(band * 2, H - band), band, o2, 0.7);                    // hazard bands: round the base, round the top
+  const inner = Math.max(0.5, H - band * 3), z0 = band * 1.5;                                  // the X runs between them
+  const wall = (cx, cy, len, along) => { for (const sign of [1, -1]) parts.push({ diag: true, x: cx, y: cy, z: z0 + inner / 2, len: Math.hypot(len, inner), t, along, angle: sign * Math.atan2(inner, len), tone, ground: true }); };
+  const px = rect.x - o1 + 0.01, py = rect.y - o1 + 0.01, fw = rect.w + 2 * o1, fd = rect.h + 2 * o1;
+  wall(px + fw / 2, py, fw, 'x'); wall(px + fw / 2, py + fd, fw, 'x'); wall(px, py + fd / 2, fd, 'y'); wall(px + fw, py + fd / 2, fd, 'y');
+  if (rubble && !moving) {                                                                      // a heap of broken pieces on the front side, beyond the band
+    // pieces never overlap each other (layering): six sit in a 3 x 2 grid of cells, three more are stacked on the first three
+    let h = 0; for (const ch of shell.id || 'x') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const rnd = () => ((h = (Math.imul(h, 1103515245) + 12345) >>> 0) % 1000) / 1000;
+    const spread = Math.max(rect.w * 0.9, 8), cw = spread / 3, cd = 3.2, x0 = rect.x + rect.w / 2 - spread / 2, y0 = rect.y + rect.h + 2.2;
+    const lower = [];
+    for (let i = 0; i < 6; i++) {
+      const col = i % 3, row = Math.floor(i / 3), size = Math.min(Math.min(cw, cd) * (0.55 + rnd() * 0.3), H * 0.32), hh = size * (0.7 + rnd() * 0.5);   // never more than a third of the building's height
+      const jx = (rnd() - 0.5) * (cw - size) * 0.8, jy = (rnd() - 0.5) * (cd - size) * 0.8;
+      const piece = { x: x0 + cw * (col + 0.5) + jx, y: y0 + cd * (row + 0.5) + jy, w: size, d: size, z: 0, h: hh, tone: rnd() > 0.5 ? 'rubble' : 'rubble2', ground: true };
+      parts.push(piece); lower.push(piece);
+    }
+    for (let i = 0; i < 3; i++) { const b0 = lower[i], size = Math.max(0.25, b0.w - 0.4); parts.push({ x: b0.x, y: b0.y, w: size, d: size, z: b0.h, h: size * 0.8, tone: rnd() > 0.5 ? 'rubble' : 'rubble2', ground: true }); }
+  }
+  return { parts, top: H };
+}
+
+/**
+ * A new file's building, still being built, standing on a lot (centre x, y and size w, d): a flat pad, a scaffold frame round the
+ * walls, a ghost body (drawn see-through) and a small crane on top. The ghost is as tall as the lines added on the diff scale,
+ * so a big new file is a big site. `z0` lifts the whole site (the hovering variants stand it above the district).
+ */
+export function ghostParts(lot, { add = 1, heightOf = defaultHeight, z0 = 0 } = {}) {
+  const h = Math.max(FLOOR_H, heightOf(add)), pad = 0.2, parts = [], { x, y, w, d } = lot, rect = { x: x - w / 2, y: y - d / 2, w, h: d };
+  parts.push({ x, y, w: w + 0.6, d: d + 0.6, z: z0, h: pad, tone: 'addPad', ground: !z0 });
+  const bx = Math.max(0.5, w - 1.2), bd = Math.max(0.5, d - 1.2);
+  parts.push({ x, y, w: bx, d: bd, z: z0 + pad, h, tone: 'ghost' });                                         // the building that will be
+  parts.push(...scaffoldParts(rect, h, { pad: 0.35, lift: FLOOR_H, z0: z0 + pad, ground: false, t: clamp(Math.min(w, d) * 0.05, 0.2, 0.45), braces: Math.ceil(h / FLOOR_H), maxPoles: 16 }));
+  const ch = clamp(h * 0.45, 1.6, 9);
+  parts.push(...craneParts({ x, y, w: Math.max(1, bx * 0.6), d: Math.max(1, bd * 0.6) }, z0 + pad + h + 0.3, ch).filter((p) => p.tone !== 'pad'));
+  return { parts, top: z0 + pad + h + 0.3 + ch };
+}
+
 /** One floor of the red-taped stack. Floors are all this tall, and there are as many as the deleted lines need. */
 export const FLOOR_H = 2.4, MAX_FLOORS = 24;
 const defaultHeight = (n) => 1.15 * Math.sqrt(n);
@@ -105,6 +155,8 @@ const floorsFor = (n, heightOf) => (n > 0 ? clamp(Math.round(heightOf(n) / FLOOR
  * So height always reads in lines: adds on the crane or scaffold, deletes on the floors, one scale for both.
  */
 export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = 'crates' } = {}) {
+  if (shell && col.change === 'removed') return condemnedParts({ ...shell, id: col.path });          // the file is being deleted: the whole building is condemned
+  if (shell && col.change === 'moved-out') return condemnedParts(shell, { tone: 'move', rubble: false });   // the file is moving: its old building is taped in amber
   const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
   if (col.focused && focusStyle === 'lines' && shell) return lineBands(col, shell);
   if (col.focused && focusStyle === 'crates') return crates(col, slot, heightOf);

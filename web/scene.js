@@ -6,7 +6,9 @@ import { buildLayout, WORLD } from './layout.js';
 import { planSpires, DIFF_COLORS, diffHeight } from './spires.js';
 import { ageDays, ageLift } from './filters.js';
 import { buildingFor, DEFAULT_STYLE, SHAPES, focusView } from './building.js';
-import { siteParts } from './sites.js';
+import { siteParts, ghostParts } from './sites.js';
+import { classifyChanges, anchorFor } from './changes.js';
+import { placeGhosts } from './placement.js';
 
 const CX = WORLD.w / 2, CY = WORLD.h / 2;
 const FLAG_W = { collapsed: 78, expanded: 214 }, FLAG_H = 34;
@@ -220,7 +222,7 @@ export function createScene(host, handlers = {}) {
   overlay.appendChild(svg);
   const gPoles = document.createElementNS(SVGNS, 'g'), gLines = document.createElementNS(SVGNS, 'g');
   svg.append(gPoles, gLines);
-  const poles = new Map(), lines = [];
+  const poles = new Map(), lines = [], moveArcs = [];
   const svgEl = (name, cls) => { const e = document.createElementNS(SVGNS, name); e.setAttribute('class', cls); return e; };
   const pool = (cls, max) => { const els = []; for (let i = 0; i < max; i++) { const e = document.createElement('div'); e.className = cls; e.style.display = 'none'; overlay.appendChild(e); els.push(e); } return els; };
   const plateLabels = pool('lbl plate', 70), fileLabels = pool('lbl file', 48), diffLabels = pool('lbl diff', 40);
@@ -229,7 +231,7 @@ export function createScene(host, handlers = {}) {
   const S = {
     layout: null, filesKey: '', prs: [], opts: { mode: 'sqrt', topper: 'share', focusId: null, visible: null, fog: true, statusColors: {}, view: '3d' },
     ui: { labels: true, flags: true, lines: 'selected', watched: true }, watched: new Set(),
-    style: { ...DEFAULT_STYLE }, styled: new Map(), occupied: new Set(), sites: [],
+    style: { ...DEFAULT_STYLE }, styled: new Map(), occupied: new Set(), sites: [], ghosts: [], moves: [],
     columns: [], growth: { t0: 0, dur: 520, active: false, p: 1 }, flags: new Map(), hover: null, highlight: new Set(), touched: new Set(), contested: new Set(), tween: null, size: { w: 1, h: 1 }, focusLabels: [],
   };
 
@@ -320,7 +322,7 @@ export function createScene(host, handlers = {}) {
     // roof gear (antennas, tanks) would poke through toppers, so buildings that carry a PR keep a clear roof
     const occ = new Set(S.columns.map((c) => c.path));
     if (occ.size !== S.occupied.size || [...occ].some((p) => !S.occupied.has(p))) { S.occupied = occ; restyle(); }
-    planSites();
+    planSites(); planGhosts();
     S.touched = new Set(S.columns.filter((c) => !c.dimmed || !S.opts.focusId).map((c) => c.path));
     S.contested = new Set(S.columns.filter((c) => c.sharedWith > 0 && !c.dimmed).map((c) => c.path));
     refreshBuildings();
@@ -360,12 +362,40 @@ export function createScene(host, handlers = {}) {
       case 'addPad': return _c.set(DIFF_COLORS.add).offsetHSL(0, -0.1, -0.2);
       case 'delPad': return _c.set(DIFF_COLORS.del).offsetHSL(0, -0.1, -0.2);
       case 'pad': return _c.copy(st).offsetHSL(0, -0.15, -0.22);
+      case 'move': return _c.set(0xf5a524);
       case 'tape': return _c.set(DIFF_COLORS.del);
       case 'post': return _c.set(0xd7dbe2);
       default: return _c.set(0x6b6670);            // the emptied floor
     }
   };
   const _qa = new THREE.Quaternion(), AX = new THREE.Vector3(1, 0, 0), AZ = new THREE.Vector3(0, 0, 1);
+  // ---- files the PR adds or moves: the map has no building for them yet (see web/changes.js, web/placement.js) ----
+  function planGhosts() {
+    S.ghosts = []; S.moves = []; const L = S.layout; if (!L) return;
+    const prs = S.prs.filter((p) => !S.opts.visible || S.opts.visible.has(p.id)), byId = new Map(prs.map((p) => [p.id, p]));
+    const want = classifyChanges(prs, L.byPath).filter((r) => r.kind === 'added' || (r.kind === 'renamed' && !r.toExists));
+    if (!want.length) return;
+    const placed = placeGhosts(L, want, { focusId: S.opts.focusId, plates: L.plates });
+    const heightOf = (n) => diffHeight(n, S.opts.mode);
+    for (const r of want) {
+      const key = `${r.prId}|${r.path}`, lot = placed.lots.get(key) || null, pr = byId.get(r.prId), z0 = lot?.z0 || 0;
+      const g = { ...r, key, lot, anchor: anchorFor(L, r.path), z0, status: pr?.status, dimmed: !!S.opts.focusId && r.prId !== S.opts.focusId, focused: r.prId === S.opts.focusId };
+      g.built = lot ? ghostParts(lot, { add: r.add || 1, heightOf, z0 }) : null; g.top = g.built ? g.built.top - z0 : 0;
+      S.ghosts.push(g);
+      if (r.kind === 'renamed' && r.fromExists && lot) S.moves.push({ prId: r.prId, status: pr?.status, from: L.byPath.get(r.from), to: lot, z0, top: g.built.top, dimmed: g.dimmed });
+    }
+  }
+  const ghostTone = (tone, st) => (tone === 'ghost' ? _c.set(DIFF_COLORS.add).offsetHSL(0, -0.1, 0.12) : siteColor(tone, st));
+  function pushGhosts(p) {
+    for (const g of S.ghosts) {
+      if (!g.built) continue; const st = new THREE.Color(statusColor(g.status)), base = { prId: g.prId, path: g.path, lines: g.add + g.del, add: g.add, del: g.del, kind: 'add', n: g.add, ghost: true };
+      for (const q of g.built.parts) {
+        const glass = g.dimmed || q.tone === 'ghost', bp = glass ? gBoxes : boxes, col = ghostTone(q.tone, st), z = g.z0 + (q.z - g.z0) * p;
+        if (q.diag) { const len = q.len * p; if (q.along === 'x') { _qa.setFromAxisAngle(AZ, q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(len, q.t, q.t), col, base, undefined, _qa); } else { _qa.setFromAxisAngle(AX, -q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(q.t, q.t, len), col, base, undefined, _qa); } }
+        else bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(q.w, Math.max(0.02, q.h * p), q.d), col, base);
+      }
+    }
+  }
   function pushSites(p) {                           // the pools are begun by drawSpires, which also draws the toppers
     for (const { c, parts } of S.sites) {
       const st = new THREE.Color(statusColor(c.status)), bp = c.dimmed ? gBoxes : boxes;
@@ -400,9 +430,10 @@ export function createScene(host, handlers = {}) {
     const sites = new Set(S.sites.map((s) => s.c)), loose = S.columns.filter((c) => !sites.has(c));   // columns drawn as toppers
     const solidCols = loose.filter((c) => !c.dimmed), glassCols = loose.filter((c) => c.dimmed);
     const count = (list) => list.reduce((a, s) => a + s.parts.length, 0), siteSolid = S.sites.filter((s) => !s.c.dimmed), siteGlass = S.sites.filter((s) => s.c.dimmed);
-    boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0) + count(siteSolid)); caps.begin(solidCols.length);
-    gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0) + count(siteGlass)); gCaps.begin(glassCols.length);
-    pushSites(p);
+    let gSolid = 0, gGlass = 0; for (const g of S.ghosts) for (const q of g.built?.parts || []) { if (g.dimmed || q.tone === 'ghost') gGlass++; else gSolid++; }
+    boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0) + count(siteSolid) + gSolid); caps.begin(solidCols.length);
+    gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0) + count(siteGlass) + gGlass); gCaps.begin(glassCols.length);
+    pushSites(p); pushGhosts(p);
     for (const c of loose) {
       const st = new THREE.Color(statusColor(c.status));
       const bp = c.dimmed ? gBoxes : boxes, cp = c.dimmed ? gCaps : caps;
@@ -423,7 +454,7 @@ export function createScene(host, handlers = {}) {
     const want = new Map();
     for (const pr of S.prs) {
       if (S.opts.visible && !S.opts.visible.has(pr.id)) continue;
-      const cols = S.columns.filter((c) => c.prId === pr.id);
+      const cols = [...S.columns.filter((c) => c.prId === pr.id), ...S.ghosts.filter((g) => g.prId === pr.id).map((g) => ({ x: g.lot ? g.lot.x : g.anchor.x, y: g.lot ? g.lot.y : g.anchor.y, z0: g.z0, total: 0, siteTop: g.top, w: 4, d: 4, ghost: true }))];   // a PR that only adds files still stands somewhere: its new lot, or the district they belong in
       if (!cols.length) continue;
       const x = cols.reduce((a, c) => a + c.x, 0) / cols.length, y = cols.reduce((a, c) => a + c.y, 0) / cols.length;
       // Optionally the pole grows with the PR's age, so what has been open longest stands tallest.
@@ -528,9 +559,10 @@ export function createScene(host, handlers = {}) {
       const mine = S.ui.lines === 'all' ? [...shown] : [...shown].filter((f) => f.pr.id === selected);
       for (const f of mine) {
         const col = statusColor(f.pr.status), p = S.growth.p;
-        for (const c of S.columns) {
+        const targets = [...S.columns.map((c) => ({ c, x: c.x, y: c.y, z: c.z0 + (colTotal(c) + capHeight(c)) * p })), ...S.ghosts.map((g) => ({ c: { prId: g.prId, dimmed: g.dimmed }, x: g.lot ? g.lot.x : g.anchor.x, y: g.lot ? g.lot.y : g.anchor.y, z: g.z0 + g.top * p + 1 }))];
+        for (const { c, x: tx, y: ty, z: tz } of targets) {
           if (c.prId !== f.pr.id || c.dimmed && S.ui.lines !== 'all') continue;
-          const t = project(c.x, c.y, c.z0 + (colTotal(c) + capHeight(c)) * p);
+          const t = project(tx, ty, tz);
           if (!t.vis) continue;
           let el = lines[li]; if (!el) { el = svgEl('path', 'bm-line'); gLines.appendChild(el); lines[li] = el; }
           const ax = f.sx, ay = f.sy - FLAG_H / 2;
@@ -540,6 +572,15 @@ export function createScene(host, handlers = {}) {
         }
       }
     }
+    // a file that moves: an amber dashed arc from its old building to its new lot
+    S.moves.forEach((mv, i) => {
+      const a = project(mv.from.mx, mv.from.my, (S.styled.get(mv.from.path)?.roof.z ?? mv.from.height) + 1), b = project(mv.to.x, mv.to.y, mv.top + 1);
+      let el = moveArcs[i]; if (!el) { el = svgEl('path', 'bm-line bm-move'); gLines.appendChild(el); moveArcs[i] = el; }
+      if (!(a.vis && b.vis)) { el.style.display = 'none'; return; }
+      el.setAttribute('d', `M${a.sx.toFixed(1)},${a.sy.toFixed(1)} Q${((a.sx + b.sx) / 2).toFixed(1)},${(Math.min(a.sy, b.sy) - 60 - Math.hypot(a.sx - b.sx, a.sy - b.sy) * 0.15).toFixed(1)} ${b.sx.toFixed(1)},${b.sy.toFixed(1)}`);
+      el.setAttribute('stroke', '#f5a524'); el.style.display = ''; el.style.opacity = mv.dimmed ? '0.3' : '1';
+    });
+    for (let i = S.moves.length; i < moveArcs.length; i++) moveArcs[i].style.display = 'none';
     for (let i = li; i < lines.length; i++) lines[i].style.display = 'none';
   }
 
@@ -563,11 +604,14 @@ export function createScene(host, handlers = {}) {
   const homeRadius = () => Math.hypot(WORLD.w, WORLD.h) * 0.3;
   function flyHome(ms) { flyTo(CX, CY, 4, homeRadius(), S.opts.view, ms); }
   function flyToPR(id) {
-    const cols = S.columns.filter((c) => c.prId === id); if (!cols.length) return;
-    const xs = cols.flatMap((c) => [c.x - c.w / 2, c.x + c.w / 2]), ys = cols.flatMap((c) => [c.y - c.d / 2, c.y + c.d / 2]);
+    // everywhere the PR stands: its columns on existing buildings and the lots (or districts) of its new files
+    const pts = [...S.columns.filter((c) => c.prId === id).flatMap((c) => [[c.x - c.w / 2, c.y - c.d / 2, c.z0 + c.total], [c.x + c.w / 2, c.y + c.d / 2, c.z0 + c.total]]),
+      ...S.ghosts.filter((g) => g.prId === id).flatMap((g) => { const x = g.lot ? g.lot.x : g.anchor.x, y = g.lot ? g.lot.y : g.anchor.y, h = g.lot ? Math.max(g.lot.w, g.lot.d) / 2 + 2 : 3; return [[x - h, y - h, g.z0 + g.top], [x + h, y + h, g.z0 + g.top]]; })];
+    if (!pts.length) return;
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
     const r = Math.max(26, Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 + 18);
-    flyTo(cx, cy, Math.max(...cols.map((c) => c.z0 + colTotal(c))) / 2, r);
+    flyTo(cx, cy, Math.max(...pts.map((q) => q[2])) / 2, r);
   }
   function flyToFile(path) { const l = S.layout?.byPath.get(path); if (l) flyTo(l.mx, l.my, roofOf(l).top / 2, Math.max(22, Math.hypot(l.r.w, l.r.h) / 2 + 14)); }
   function setView(kind, { instant = false } = {}) {
@@ -637,7 +681,7 @@ export function createScene(host, handlers = {}) {
     setUI(u) { const was = S.ui.watched; S.ui = { ...S.ui, ...u }; if (S.ui.watched !== was) drawWatch(); },
     setWatched(paths) { S.watched = new Set(paths || []); drawWatch(); },
     setHighlight(paths) { S.highlight = new Set(paths || []); refreshBuildings(); },
-    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov, sites: S.sites.length }),
+    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov, sites: S.sites.length, ghosts: S.ghosts.length, placed: S.ghosts.filter((g) => g.lot).length, moves: S.moves.length }),
     layout: () => S.layout,
     /** Hash identity of one file: its index code, silhouette and window style. */
     buildingInfo(path) { const b = S.styled.get(path); return b ? { code: b.t.code, shape: S.style.mode === 'full' ? SHAPES[b.t.shape] : 'block', parts: b.parts.length } : null; },

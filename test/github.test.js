@@ -96,7 +96,7 @@ const cli = (args, env) => new Promise((resolve) => execFile('node', ['bin/battl
 test('fetchGithub: open PRs plus recently ended ones, as you, with the right gh commands', async () => {
   const s = setup({ open: [run({ number: 1 }), run({ number: 2, author: { login: 'devon' } })], merged: [run({ number: 3, state: 'MERGED' })], closed: [run({ number: 4, state: 'CLOSED' }), run({ number: 1 })] });
   process.env.FAKE_GH_CFG = s.env.FAKE_GH_CFG; process.env.FAKE_GH_LOG = s.env.FAKE_GH_LOG;
-  const r = await fetchGithub({ repo: 'o/r', gh: s.gh, now: Date.parse('2026-11-26T12:00:00Z') });
+  const r = await fetchGithub({ changes: false, repo: 'o/r', gh: s.gh, now: Date.parse('2026-11-26T12:00:00Z') });
   assert.equal(r.viewer, 'maya'); assert.deepEqual(r.warnings, []);
   assert.deepEqual(r.prs.map((p) => [p.id, p.status, p.mine]), [['#1', 'review_requested', true], ['#2', 'review_requested', false], ['#3', 'merged', true], ['#4', 'closed', true]], 'a PR in both lists is not duplicated');
   assert.deepEqual(r.counts, { open: 2, ended: 2 });
@@ -112,7 +112,7 @@ test('fetchGithub: open PRs plus recently ended ones, as you, with the right gh 
 test('fetchGithub: GitHub Enterprise sets GH_HOST for every call; no repo means "the checkout I am in"; ended-days 0 skips the extras', async () => {
   const s = setup({ open: [run({ author: { login: 'zed' } })] });                       // not ours, not in re-review: no second look
   process.env.FAKE_GH_CFG = s.env.FAKE_GH_CFG; process.env.FAKE_GH_LOG = s.env.FAKE_GH_LOG;
-  await fetchGithub({ host: 'ghe.example.com', gh: s.gh, endedDays: 0 });
+  await fetchGithub({ changes: false, host: 'ghe.example.com', gh: s.gh, endedDays: 0 });
   const calls = s.calls();
   assert.equal(calls.length, 2, 'only the user lookup and the open list');
   assert.ok(calls.every((c) => c.host === 'ghe.example.com'));
@@ -122,14 +122,14 @@ test('fetchGithub: GitHub Enterprise sets GH_HOST for every call; no repo means 
 test('fetchGithub: trouble with the extras or the user lookup is a warning; trouble with the open list is an error', async () => {
   const s = setup({ open: [run()], noUser: true, fail: ['merged'] });
   process.env.FAKE_GH_CFG = s.env.FAKE_GH_CFG; process.env.FAKE_GH_LOG = s.env.FAKE_GH_LOG;
-  const r = await fetchGithub({ repo: 'o/r', gh: s.gh });
+  const r = await fetchGithub({ changes: false, repo: 'o/r', gh: s.gh });
   assert.equal(r.prs.length, 1); assert.equal(r.viewer, null); assert.ok(!('mine' in r.prs[0]));
   assert.equal(r.warnings.length, 2); assert.match(r.warnings.join('|'), /who you are/); assert.match(r.warnings.join('|'), /merged/);
   s.set({ fail: ['open'], failMessage: 'HTTP 401: Bad credentials' });
-  await assert.rejects(fetchGithub({ repo: 'o/r', gh: s.gh, host: 'ghe.example.com' }), (e) => e instanceof SyncError && /gh auth login --hostname ghe\.example\.com/.test(e.message));
-  s.set({ raw: 'not json' }); await assert.rejects(fetchGithub({ gh: s.gh }), /not JSON/);
-  s.set({ raw: '{"a":1}' }); await assert.rejects(fetchGithub({ gh: s.gh }), /unexpected shape/);
-  await assert.rejects(fetchGithub({ gh: path.join(s.dir, 'nope') }), /Install the GitHub CLI/);
+  await assert.rejects(fetchGithub({ changes: false, repo: 'o/r', gh: s.gh, host: 'ghe.example.com' }), (e) => e instanceof SyncError && /gh auth login --hostname ghe\.example\.com/.test(e.message));
+  s.set({ raw: 'not json' }); await assert.rejects(fetchGithub({ changes: false, gh: s.gh }), /not JSON/);
+  s.set({ raw: '{"a":1}' }); await assert.rejects(fetchGithub({ changes: false, gh: s.gh }), /unexpected shape/);
+  await assert.rejects(fetchGithub({ changes: false, gh: path.join(s.dir, 'nope') }), /Install the GitHub CLI/);
 });
 
 test('battlemap-sync: writes the feed atomically and the server can read it', async () => {
@@ -256,7 +256,7 @@ test('fetchGithub reads timelines in one request, only for our PRs and anyone\'s
     timeline: { 1: [cm(10), rev('ines', 'CHANGES_REQUESTED', 14)], 2: [rev('ines', 'COMMENTED', 20), req('ines', 33)] },
   });
   useEnv(s);
-  const r = await fetchGithub({ repo: 'o/r', gh: s.gh, endedDays: 0 });
+  const r = await fetchGithub({ changes: false, repo: 'o/r', gh: s.gh, endedDays: 0 });
   assert.deepEqual(r.warnings, []);
   assert.deepEqual(r.prs.map((p) => [p.id, p.waitingSince]), [['#1', T(14)], ['#2', T(33)], ['#3', null]]);
   assert.equal(gql(s).length, 1, 'one request for both');
@@ -268,12 +268,12 @@ test('fetchGithub reads timelines in one request, only for our PRs and anyone\'s
 test('fetchGithub: Enterprise host reaches the GraphQL call; owner and name come from host/owner/name, or from the checkout', async () => {
   const s = setup({ open: [own(1)], timeline: { 1: [cm(1), com('ines', 5)] } });
   useEnv(s);
-  await fetchGithub({ repo: 'ghe.example.com/acme/widgets', host: 'ghe.example.com', gh: s.gh, endedDays: 0 });
+  await fetchGithub({ changes: false, repo: 'ghe.example.com/acme/widgets', host: 'ghe.example.com', gh: s.gh, endedDays: 0 });
   assert.ok(gql(s)[0].args.includes('owner=acme') && gql(s)[0].args.includes('name=widgets'));
   assert.equal(gql(s)[0].host, 'ghe.example.com');
   const t = setup({ open: [own(1)], timeline: { 1: [cm(1), com('ines', 5)] }, repoView: 'acme/gadgets' });
   useEnv(t);
-  const r = await fetchGithub({ gh: t.gh, endedDays: 0 });
+  const r = await fetchGithub({ changes: false, gh: t.gh, endedDays: 0 });
   assert.ok(t.calls().some((c) => c.args[0] === 'repo' && c.args[1] === 'view'), 'asked gh which repository this is');
   assert.ok(gql(t)[0].args.includes('owner=acme') && gql(t)[0].args.includes('name=gadgets'));
   assert.equal(r.prs[0].waitingSince, T(5));
@@ -282,7 +282,7 @@ test('fetchGithub: Enterprise host reaches the GraphQL call; owner and name come
 test('fetchGithub: timelines are batched twenty to a request and capped at a hundred PRs, with a warning', async () => {
   const s = setup({ open: Array.from({ length: 105 }, (_, i) => own(i + 1)) });
   useEnv(s);
-  const r = await fetchGithub({ repo: 'o/r', gh: s.gh, endedDays: 0 });
+  const r = await fetchGithub({ changes: false, repo: 'o/r', gh: s.gh, endedDays: 0 });
   assert.equal(gql(s).length, 5, '100 PRs at 20 a request');
   assert.match(r.warnings.join('|'), /looked at 100 of 105/);
   assert.equal(r.prs.length, 105);
@@ -291,23 +291,23 @@ test('fetchGithub: timelines are batched twenty to a request and capped at a hun
 test('fetchGithub: a failed timeline read is a warning and falls back; the rest still works', async () => {
   const s = setup({ open: [own(1), reReview(2)], failGraphql: true });
   useEnv(s);
-  const r = await fetchGithub({ repo: 'o/r', gh: s.gh, endedDays: 0 });
+  const r = await fetchGithub({ changes: false, repo: 'o/r', gh: s.gh, endedDays: 0 });
   assert.deepEqual(r.prs.map((p) => p.waitingSince), [null, null]);
   assert.equal(r.warnings.length, 1); assert.match(r.warnings[0], /2 PRs.*falls back to the last update/);
   const t = setup({ open: [own(1), own(2)], timeline: { 1: [cm(1), com('ines', 5)] }, noTimeline: ['2'] });
   useEnv(t);
-  const r2 = await fetchGithub({ repo: 'o/r', gh: t.gh, endedDays: 0 });
+  const r2 = await fetchGithub({ changes: false, repo: 'o/r', gh: t.gh, endedDays: 0 });
   assert.deepEqual(r2.prs.map((p) => p.waitingSince), [T(5), null]);
   assert.match(r2.warnings.join('|'), /1 PR\b/);
   const u = setup({ open: [own(1)], failGraphql: true });
   useEnv(u);
-  assert.equal((await fetchGithub({ repo: 'o/r', gh: u.gh, endedDays: 0 })).prs.length, 1, 'the feed itself is still produced');
+  assert.equal((await fetchGithub({ changes: false, repo: 'o/r', gh: u.gh, endedDays: 0 })).prs.length, 1, 'the feed itself is still produced');
 });
 
 test('fetchGithub: without knowing who you are, only re-reviews are looked at', async () => {
   const s = setup({ open: [own(1), reReview(2)], noUser: true, timeline: { 2: [rev('ines', 'COMMENTED', 20), req('ines', 40)] } });
   useEnv(s);
-  const r = await fetchGithub({ repo: 'o/r', gh: s.gh, endedDays: 0 });
+  const r = await fetchGithub({ changes: false, repo: 'o/r', gh: s.gh, endedDays: 0 });
   assert.deepEqual([...gql(s)[0].args.find((a) => a.startsWith('query=')).matchAll(/pr(\d+): pullRequest/g)].map((m) => m[1]), ['2']);
   assert.deepEqual(r.prs.map((p) => p.waitingSince), [null, T(40)]);
 });
