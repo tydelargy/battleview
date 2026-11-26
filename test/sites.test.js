@@ -131,7 +131,8 @@ const show = (bad) => bad.slice(0, 3).map((x) => `${x.a.tone || 'wall'}/${x.b.to
 test('layering: no visible coplanar faces in any building shape', () => {
   for (const shape of [0, 1, 2, 3, 4, 5, 6]) for (const v of [0.1, 0.9]) {
     const { parts, roof } = silhouette(shape, { x: 10, y: 20, w: 20, h: 12 }, 30, v);
-    for (const k of [0, 1, 2]) assert.deepEqual(coplanarOverlaps([...parts, ...roofGear(k, roof, 30)]), [], `shape ${shape} gear ${k}`);
+    const centred = (list) => list.map((p) => ({ ...p, x: p.x + p.w / 2, y: p.y + p.d / 2 }));   // building parts are corner-based, the checker is centre-based
+    for (const k of [0, 1, 2]) assert.deepEqual(coplanarOverlaps(centred([...parts, ...roofGear(k, roof, 30)])), [], `shape ${shape} gear ${k}`);
   }
 });
 

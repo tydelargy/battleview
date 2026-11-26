@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { ConfigStore } from '../server/config.js';
 import { createApp } from '../server/server.js';
+import { createHub } from '../server/hub.js';
 import { createMockJira } from '../server/jira/mock.js';
 import { sampleFiles, samplePRs } from '../server/sample.js';
 import { scanRepo } from '../server/localrepo.js';
@@ -12,6 +13,10 @@ import { watchFeed } from '../server/feedwatch.js';
 const HELP = `battlemap - tactical 3D map of your repo, PRs and Jira tickets
 
 Usage: battlemap [options]
+
+  --hub                Many repos on one map. Add a repo by URL; nothing is cloned, everything comes from gh
+  --data <dir>         With --hub: where cities and their settings are kept (default ~/.local/share/battlemap)
+  --gh <path>          The GitHub CLI to use (default: gh from PATH)
 
   --port <n>           Port to serve on (default 4747)
   --host <addr>        Bind address (default 127.0.0.1)
@@ -36,6 +41,9 @@ function parse(argv) {
     if (a === '-h' || a === '--help') o.help = true;
     else if (a === '--port') o.port = Number(next());
     else if (a === '--host') o.host = next();
+    else if (a === '--hub') o.hub = true;
+    else if (a === '--data') o.data = next();
+    else if (a === '--gh') o.gh = next();
     else if (a === '--repo') o.repo = next();
     else if (a === '--prs') o.prs = next();
     else if (a === '--rescan') o.rescan = Number(next());
@@ -56,6 +64,18 @@ if (o.rescan && !o.repo) { console.error('--rescan only makes sense with --repo'
 if (!['server', 'cloud'].includes(o.mockFlavor)) { console.error('--mock-flavor must be server or cloud'); process.exit(1); }
 
 const store = new ConfigStore({ file: o.config });
+if (o.hub) {
+  if (o.repo || o.prs) { console.error('--hub cannot be combined with --repo or --prs: add repos from the map'); process.exit(1); }
+  const dataDir = path.resolve(o.data || process.env.BATTLEMAP_DATA || path.join(process.env.XDG_DATA_HOME || path.join(process.env.HOME || '.', '.local', 'share'), 'battlemap'));
+  const hub = createHub({ dataDir, store, gh: o.gh || process.env.BATTLEMAP_GH || 'gh', log: (m) => console.warn(m) });
+  let hi;
+  try { hi = await hub.listen(o.port, o.host); } catch (e) { console.error(e.code === 'EADDRINUSE' ? `Port ${o.port} is in use. Try --port ${o.port + 1}.` : e.message); process.exit(1); }
+  console.log(`Battle Map (all your repos) at ${hi.url}   data: ${dataDir}`);
+  if (o.host !== '127.0.0.1' && o.host !== 'localhost') console.warn('Warning: bound to a non-local address. There is no login; anyone who can reach this port can see your PRs and use your Jira token.');
+  if (o.open) { const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'; spawn(cmd, process.platform === 'win32' ? ['/c', 'start', hi.url] : [hi.url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref(); }
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, async () => { await hub.close(); process.exit(0); });
+  await new Promise(() => {});   // serve until signalled
+}
 let files, prs = [], sample = false;
 if (o.repo) {
   try { files = scanRepo(o.repo); } catch (e) { console.error(`Could not scan ${o.repo}: ${e.stderr?.toString().trim() || e.message}`); process.exit(1); }
