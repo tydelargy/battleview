@@ -1,0 +1,30 @@
+# deps
+node_modules/
+
+# secrets and local config (the app keeps its config in ~/.config/battlemap, never here)
+.env
+.env.*
+!.env.example
+*.pem
+battlemap.config.json
+config.local.json
+
+# build, test and tool output
+coverage/
+dist/
+*.log
+npm-debug.log*
+test-results/
+playwright-report/
+*.tgz
+
+# editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+
+# jj / local agent state
+.jj/
+.claude/

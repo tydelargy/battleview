@@ -1,0 +1,41 @@
+{
+  "name": "battlemap",
+  "version": "0.3.0",
+  "description": "Tactical 3D map of your codebase, open PRs and Jira tickets",
+  "type": "module",
+  "bin": {
+    "battlemap": "bin/battlemap.js"
+  },
+  "scripts": {
+    "start": "node bin/battlemap.js",
+    "mock": "node bin/battlemap.js --mock-jira",
+    "test": "node --test",
+    "e2e": "node e2e/ui.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "three": "^0.171.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tydelargy/battleview.git"
+  },
+  "homepage": "https://github.com/tydelargy/battleview#readme",
+  "keywords": [
+    "code-visualization",
+    "pull-requests",
+    "jira",
+    "threejs",
+    "treemap"
+  ],
+  "files": [
+    "bin",
+    "server",
+    "web",
+    "README.md",
+    "LICENSE"
+  ]
+}
