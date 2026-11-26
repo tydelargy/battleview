@@ -9,7 +9,7 @@ export const MATERIALS = ['concrete', 'brick', 'stone', 'steel'];
 export const WINDOW_STYLES = ['grid', 'bands', 'slits'];
 export const ROOF_GEAR = ['antenna', 'water tank', 'vents'];
 export const STYLE_MODES = { plain: 'Plain', colors: 'Colours', full: 'Buildings' };
-export const DEFAULT_STYLE = { mode: 'full', spread: 22, density: 1.1, variety: 7, height: 1.5, texture: true, salt: 0, codes: true };
+export const DEFAULT_STYLE = { mode: 'full', spread: 22, density: 1.1, variety: 7, height: 1.5, texture: true, focus: 'side', salt: 0, codes: true };
 
 /** Fingerprint of a file: FNV-1a 32 bit over "path:salt". */
 export const fingerprint = (path, salt = 0) => hash(`${path}:${salt | 0}`);
@@ -32,6 +32,7 @@ export function normaliseStyle(raw) {
   s.variety = Math.round(num(raw.variety, 1, SHAPES.length, s.variety));
   s.height = Math.round(num(raw.height, 1, 3, s.height) * 10) / 10;
   if (typeof raw.texture === 'boolean') s.texture = raw.texture;
+  if (raw.focus === 'side' || raw.focus === 'facade') s.focus = raw.focus;
   s.salt = Number.isInteger(raw.salt) && raw.salt >= 0 && raw.salt < 1e9 ? raw.salt : 0;
   if (typeof raw.codes === 'boolean') s.codes = raw.codes;
   return s;

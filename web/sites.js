@@ -59,30 +59,30 @@ export function tapeFloor({ x, y, w, d }, z0, h) {
  * Scaffolding around a building's footprint rect from the ground up to `top`: a pole every few units and a ledger
  * ring at every lift, with the top ring in the PR's colour. Capped so a huge building costs a bounded number of boxes.
  */
-export function scaffoldParts(rect, top, { pad = 0.5, lift = 3.2, maxPoles = 28 } = {}) {
+export function scaffoldParts(rect, top, { pad = 0.5, lift = 3.2, maxPoles = 28, z0 = 0, ground = true, t: thick = null, braces = 8 } = {}) {
   const x0 = rect.x - pad, y0 = rect.y - pad, x1 = rect.x + rect.w + pad, y1 = rect.y + rect.h + pad, W = x1 - x0, D = y1 - y0;
-  const per = 2 * (W + D), step = Math.max(2.6, per / maxPoles), t = clamp(Math.max(W, D) * 0.014, 0.4, 1.1), parts = [];
+  const per = 2 * (W + D), step = Math.max(2.6, per / maxPoles), t = thick ?? clamp(Math.max(W, D) * 0.014, 0.4, 1.1), parts = [];
   const nx = Math.max(1, Math.round(W / step)), ny = Math.max(1, Math.round(D / step));
-  const pole = (px, py) => parts.push({ x: px, y: py, w: t, d: t, z: 0, h: top, tone: 'add', ground: true });
+  const pole = (px, py) => parts.push({ x: px, y: py, w: t, d: t, z: z0, h: top, tone: 'add', ground });
   for (let i = 0; i <= nx; i++) { pole(x0 + (W * i) / nx, y0); pole(x0 + (W * i) / nx, y1); }
   for (let j = 1; j < ny; j++) { pole(x0, y0 + (D * j) / ny); pole(x1, y0 + (D * j) / ny); }
   const levels = Math.max(1, Math.round(top / lift));
   for (let k = 1; k <= levels; k++) {
-    const th = k === levels ? t * 1.4 : t, z = (top * k) / levels - th, tone = k === levels ? 'status' : 'add';
-    parts.push({ x: (x0 + x1) / 2, y: y0, w: W, d: th, z, h: th, tone, ground: true }, { x: (x0 + x1) / 2, y: y1, w: W, d: th, z, h: th, tone, ground: true },
-      { x: x0, y: (y0 + y1) / 2, w: th, d: D, z, h: th, tone, ground: true }, { x: x1, y: (y0 + y1) / 2, w: th, d: D, z, h: th, tone, ground: true });
+    const th = k === levels ? t * 1.4 : t, z = z0 + (top * k) / levels - th, tone = k === levels ? 'status' : 'add';
+    parts.push({ x: (x0 + x1) / 2, y: y0, w: W, d: th, z, h: th, tone, ground }, { x: (x0 + x1) / 2, y: y1, w: W, d: th, z, h: th, tone, ground },
+      { x: x0, y: (y0 + y1) / 2, w: th, d: D, z, h: th, tone, ground }, { x: x1, y: (y0 + y1) / 2, w: th, d: D, z, h: th, tone, ground });
   }
   // diagonal braces, one per lift on each face, alternating direction, so it reads as scaffolding and not a fence
   const lh = top / levels, bt = t * 0.6;
-  for (let k = 0; k < Math.min(levels, 8); k++) {
-    const z = lh * (k + 0.5), sign = k % 2 ? -1 : 1, brace = (cx, cy, len, along) => ({ x: cx, y: cy, z, len: Math.hypot(len, lh), t: bt, along, angle: sign * Math.atan2(lh, len), tone: 'add', diag: true, ground: true });
+  for (let k = 0; k < Math.min(levels, braces); k++) {
+    const z = z0 + lh * (k + 0.5), sign = k % 2 ? -1 : 1, brace = (cx, cy, len, along) => ({ x: cx, y: cy, z, len: Math.hypot(len, lh), t: bt, along, angle: sign * Math.atan2(lh, len), tone: 'add', diag: true, ground });
     parts.push(brace((x0 + x1) / 2, y0, W, 'x'), brace((x0 + x1) / 2, y1, W, 'x'), brace(x0, (y0 + y1) / 2, D, 'y'), brace(x1, (y0 + y1) / 2, D, 'y'));
   }
   return parts;
 }
 
 /** One floor of the red-taped stack. Floors are all this tall, and there are as many as the deleted lines need. */
-export const FLOOR_H = 2.4, MAX_FLOORS = 10;
+export const FLOOR_H = 2.4, MAX_FLOORS = 24;
 const defaultHeight = (n) => 1.15 * Math.sqrt(n);
 const floorsFor = (n, heightOf) => (n > 0 ? clamp(Math.round(heightOf(n) / FLOOR_H), 1, MAX_FLOORS) : 0);
 
@@ -94,8 +94,9 @@ const floorsFor = (n, heightOf) => (n > 0 ? clamp(Math.round(heightOf(n) / FLOOR
  *              hunks as taped floors on the roof, each hunk as many floors as its lines need
  * So height always reads in lines: adds on the crane or scaffold, deletes on the floors, one scale for both.
  */
-export function siteParts(col, shell, { heightOf = defaultHeight } = {}) {
+export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = 'side' } = {}) {
   const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
+  if (col.focused && focusStyle === 'side') return sideBySide(col, slot, heightOf);
   const delHunks = col.parts.filter((p) => p.kind === 'del').map((p) => p.n);
   const counts = col.focused && delHunks.length ? delHunks.map((n) => floorsFor(n, heightOf)) : [floorsFor(col.del, heightOf)];
   let z = col.z0, used = 0;
@@ -108,4 +109,22 @@ export function siteParts(col, shell, { heightOf = defaultHeight } = {}) {
     parts.push(...craneParts(slot, z, h)); top = z + h;
   } else if (!used) { parts.push(...craneParts(slot, z, 0.8)); top = z + 0.8; }
   return { parts, top };
+}
+
+/**
+ * A focused PR, the two halves of the change standing next to each other on the roof: additions as a scaffold tower on
+ * the left, deletions as a taped-floor tower on the right. Same footprint, same baseline, same level height (FLOOR_H),
+ * and each side is as many levels as its lines need on the one diff scale, so "how much added against how much deleted"
+ * is two stacks you can count. The sides are fixed (adds left, deletes right, along the longer side of the slot), and
+ * a side with nothing in it is just its flat pad, so an absence is visible too.
+ */
+function sideBySide(col, slot, heightOf) {
+  const longX = slot.w >= slot.d, gap = Math.min(0.5, (longX ? slot.w : slot.d) * 0.08), half = ((longX ? slot.w : slot.d) - gap) / 2;
+  const sides = longX ? [{ ...slot, x: slot.x - (half + gap) / 2, w: half }, { ...slot, x: slot.x + (half + gap) / 2, w: half }]
+    : [{ ...slot, y: slot.y - (half + gap) / 2, d: half }, { ...slot, y: slot.y + (half + gap) / 2, d: half }];
+  const [a, b] = sides, parts = [], na = col.add > 0 ? floorsFor(col.add, heightOf) : 0, nd = col.del > 0 ? floorsFor(col.del, heightOf) : 0;
+  parts.push({ x: a.x, y: a.y, w: a.w, d: a.d, z: col.z0, h: 0.2, tone: 'addPad' }, { x: b.x, y: b.y, w: b.w, d: b.d, z: col.z0, h: 0.2, tone: 'delPad' });
+  if (na) parts.push(...scaffoldParts({ x: a.x - a.w / 2, y: a.y - a.d / 2, w: a.w, h: a.d }, na * FLOOR_H, { pad: 0, lift: FLOOR_H, z0: col.z0, ground: false, t: clamp(Math.min(a.w, a.d) * 0.06, 0.2, 0.5), braces: na, maxPoles: 12 }));
+  for (let i = 0; i < nd; i++) parts.push(...tapeFloor(b, col.z0 + i * FLOOR_H, FLOOR_H));
+  return { parts, top: col.z0 + Math.max(na, nd, 1) * FLOOR_H };
 }

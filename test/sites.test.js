@@ -82,18 +82,46 @@ test('the same lines are the same size in every column: two columns with 9 added
   assert.ok(siteParts(column({ add: 400, del: 0, w: 3, d: 3 }), SHELL, { heightOf: height }).top - 12 > (a.top - 12) * 4, 'and 400 lines stand several times taller than 9');
 });
 
-test('focused: scaffolding as tall as the additions, floors for the deleting hunks, no crane', () => {
+test('focused, facade style: scaffolding as tall as the additions, floors for the deleting hunks, no crane', () => {
   const parts = [{ dz: 0, h: 3, kind: 'add', n: 30 }, { dz: 3, h: 1, kind: 'del', n: 4 }, { dz: 4, h: 2, kind: 'add', n: 10 }, { dz: 6, h: 1, kind: 'del', n: 150 }];
-  const s = siteParts(column({ focused: true, parts, add: 40, del: 154 }), SHELL, { heightOf: height });
+  const s = siteParts(column({ focused: true, parts, add: 40, del: 154 }), SHELL, { heightOf: height, focusStyle: 'facade' });
   assert.ok(s.parts.some((p) => p.tone === 'add') && !s.parts.some((p) => p.tone === 'statusDark'), 'scaffolding, no crane');
   assert.equal(floors(s.parts), 1 + Math.round(height(150) / FLOOR_H), 'a 4-line hunk is one floor, a 150-line hunk several');
   const tops = s.parts.filter((p) => p.tone === 'floor').map((p) => p.z); assert.ok(tops[0] === 12 && tops.every((z, i) => !i || z > tops[i - 1]), 'stacked on the roof');
   const scaf = s.parts.filter((p) => p.tone === 'add' && !p.diag), tall = Math.max(...scaf.map((p) => p.z + p.h));
   assert.ok(Math.abs(tall - Math.min(SHELL.h, height(40))) < 1e-6, 'as tall as 40 added lines, up to the walled part');
-  const huge = siteParts(column({ focused: true, add: 5000, del: 0, parts: [{ dz: 0, h: 5, kind: 'add', n: 5000 }] }), SHELL, { heightOf: height });
+  const huge = siteParts(column({ focused: true, add: 5000, del: 0, parts: [{ dz: 0, h: 5, kind: 'add', n: 5000 }] }), SHELL, { heightOf: height, focusStyle: 'facade' });
   assert.ok(Math.max(...huge.parts.filter((p) => p.tone === 'add' && !p.diag).map((p) => p.z + p.h)) <= SHELL.h + 1e-6, 'never past the walled part');
-  const small = siteParts(column({ focused: true, add: 2, del: 0, parts: [{ dz: 0, h: 1, kind: 'add', n: 2 }] }), SHELL, { heightOf: height });
+  const small = siteParts(column({ focused: true, add: 2, del: 0, parts: [{ dz: 0, h: 1, kind: 'add', n: 2 }] }), SHELL, { heightOf: height, focusStyle: 'facade' });
   assert.ok(Math.max(...small.parts.filter((p) => p.tone === 'add' && !p.diag).map((p) => p.z + p.h)) >= 2 - 1e-6, 'a tiny change still gets a visible scaffold');
+});
+
+test('focused, side by side: additions left and deletions right, same footprint, same baseline, same level height', () => {
+  const col = column({ focused: true, add: 420, del: 310, w: 12, d: 6, parts: [{ dz: 0, h: 3, kind: 'add', n: 420 }, { dz: 3, h: 3, kind: 'del', n: 310 }] });
+  const { parts, top: t } = siteParts(col, SHELL, { heightOf: height });
+  const levels = (n) => Math.round(height(n) / FLOOR_H);
+  assert.equal(floors(parts), levels(310), 'the deleted side is as many floors as its lines need');
+  const scaf = parts.filter((p) => p.tone === 'add' && !p.diag), poles = scaf.filter((p) => p.h > FLOOR_H * 2);
+  assert.ok(Math.abs(Math.max(...scaf.map((p) => p.z + p.h)) - (12 + levels(420) * FLOOR_H)) < 1e-6, 'the added side is as many levels as its lines need');
+  assert.ok(poles.every((p) => p.z === 12), 'both sides start on the roof');
+  const pads = { add: parts.find((p) => p.tone === 'addPad'), del: parts.find((p) => p.tone === 'delPad') };
+  assert.deepEqual([pads.add.w, pads.add.d], [pads.del.w, pads.del.d], 'equal footprints');
+  assert.ok(pads.add.x < pads.del.x && pads.add.y === pads.del.y, 'adds left, deletes right, along the longer side');
+  assert.ok(Math.abs(pads.add.w + pads.del.w + (pads.del.x - pads.add.x - pads.add.w)) <= 12 + 1e-6, 'together they fit the slot');
+  assert.ok(Math.abs(t - (12 + Math.max(levels(420), levels(310)) * FLOOR_H)) < 1e-9);
+  for (const p of parts.filter((q) => !q.diag && q.tone !== 'add')) assert.ok(p.x - p.w / 2 >= col.x - 6.5 && p.x + p.w / 2 <= col.x + 6.5, 'inside the slot (give or take the thickness of a rail)');
+  assert.ok(!parts.some((p) => p.tone === 'statusDark'), 'no crane while focused');
+});
+
+test('side by side: the longer side of the slot decides where the halves go, and an empty side is just its pad', () => {
+  const tall = siteParts(column({ focused: true, w: 5, d: 14, add: 50, del: 0, parts: [{ dz: 0, h: 1, kind: 'add', n: 50 }] }), SHELL, { heightOf: height }).parts;
+  const a = tall.find((p) => p.tone === 'addPad'), d = tall.find((p) => p.tone === 'delPad');
+  assert.ok(a.y < d.y && a.x === d.x, 'a tall slot splits front to back');
+  assert.equal(floors(tall), 0); assert.ok(d.h < 0.5, 'no deletions: only the red pad');
+  const same = (n) => siteParts(column({ focused: true, add: n, del: n, parts: [] }), SHELL, { heightOf: height });
+  const eq = same(100), floorsEq = floors(eq.parts), lv = eq.parts.filter((p) => p.tone === 'status').length;
+  assert.equal(floorsEq, Math.round(height(100) / FLOOR_H)); assert.ok(lv >= 1, 'equal adds and deletes are equal levels');
+  assert.ok(floors(siteParts(column({ focused: true, add: 1, del: 1, parts: [] }), SHELL, { heightOf: height }).parts) === 1, 'a single line is still a level');
 });
 
 test('every column in the sample turns into a bounded number of boxes', () => {
@@ -101,7 +129,7 @@ test('every column in the sample turns into a bounded number of boxes', () => {
   for (const l of layout.leaves) { const x = buildingFor(l, st, { gear: false }); b.set(l.path, x); roofs.set(l.path, { r: x.roof, height: x.roof.z }); }
   const prs = [{ id: '#1', status: 'review_requested', files: layout.leaves.map((l) => ({ path: l.path, add: 25, del: 5, hunks: [{ add: 25, del: 5 }] })) }];
   for (const focusId of [null, '#1']) for (const col of planSpires({ byPath: layout.byPath, prs, roofs, focusId })) {
-    const { parts, top: t } = siteParts(col, b.get(col.path).shell, { heightOf: height });
+    const { parts, top: t } = siteParts(col, b.get(col.path).shell, { heightOf: height, focusStyle: focusId ? 'side' : 'facade' });
     assert.ok(parts.length > 0 && parts.length < 220, `${parts.length} boxes`);
     assert.ok(parts.every((p) => Number.isFinite(p.x + p.y + p.z) && (p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0)) && t >= col.z0);
   }

@@ -268,7 +268,7 @@ export function createScene(host, handlers = {}) {
   const roofOf = (l) => { const b = S.styled.get(l.path); const r = b ? b.roof : { ...l.r, z: l.height }; return { cx: r.x + r.w / 2, cy: r.y + r.h / 2, w: r.w, h: r.h, top: r.z }; };
   const roofMap = () => new Map([...S.styled].map(([path, b]) => [path, { r: b.roof, height: b.roof.z }]));
   function setStyle(next) {
-    const st = { ...S.style, ...next }, geometry = st.mode !== S.style.mode || st.spread !== S.style.spread || st.variety !== S.style.variety || st.salt !== S.style.salt || st.height !== S.style.height;
+    const st = { ...S.style, ...next }, geometry = st.mode !== S.style.mode || st.spread !== S.style.spread || st.variety !== S.style.variety || st.salt !== S.style.salt || st.height !== S.style.height || st.focus !== S.style.focus;
     S.style = st; uDens.value = st.density; uTex.value = st.texture ? 1 : 0;
     if (!S.layout) return;
     if (geometry) { restyle(); setPRs(S.prs, {}); drawWatch(); } else refreshBuildings();
@@ -338,7 +338,7 @@ export function createScene(host, handlers = {}) {
     for (const c of S.columns) c.siteTop = undefined;
     if (S.style.mode !== 'full') return;
     // sized on the same diff scale as the toppers (spires.js), so heights compare across the whole map
-    S.sites = S.columns.map((c) => { const r = siteParts(c, S.styled.get(c.path)?.shell, { heightOf: (n) => diffHeight(n, S.opts.mode) }); c.siteTop = r.top - c.z0; return { c, parts: r.parts }; });
+    S.sites = S.columns.map((c) => { const r = siteParts(c, S.styled.get(c.path)?.shell, { heightOf: (n) => diffHeight(n, S.opts.mode), focusStyle: S.style.focus }); c.siteTop = r.top - c.z0; return { c, parts: r.parts }; });
   }
   const siteColor = (tone, st) => {
     switch (tone) {
@@ -346,6 +346,8 @@ export function createScene(host, handlers = {}) {
       case 'statusDark': return _c.copy(st).offsetHSL(0, 0, -0.16);
       case 'metal': return _c.set(0x9aa5b1);
       case 'add': return _c.set(DIFF_COLORS.add);
+      case 'addPad': return _c.set(DIFF_COLORS.add).offsetHSL(0, -0.1, -0.2);
+      case 'delPad': return _c.set(DIFF_COLORS.del).offsetHSL(0, -0.1, -0.2);
       case 'pad': return _c.copy(st).offsetHSL(0, -0.15, -0.22);
       case 'tape': return _c.set(DIFF_COLORS.del);
       case 'post': return _c.set(0xd7dbe2);
