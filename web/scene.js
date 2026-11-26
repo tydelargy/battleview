@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildLayout, WORLD } from './layout.js';
 import { planSpires, DIFF_COLORS } from './spires.js';
+import { ageDays, ageLift } from './filters.js';
 
 const CX = WORLD.w / 2, CY = WORLD.h / 2;
 const FLAG_W = { collapsed: 78, expanded: 214 }, FLAG_H = 34;
@@ -231,7 +232,9 @@ export function createScene(host, handlers = {}) {
       const cols = S.columns.filter((c) => c.prId === pr.id);
       if (!cols.length) continue;
       const x = cols.reduce((a, c) => a + c.x, 0) / cols.length, y = cols.reduce((a, c) => a + c.y, 0) / cols.length;
-      const top = Math.max(...cols.map((c) => c.z0 + c.total + capHeight(c))) + 6;
+      // Optionally the pole grows with the PR's age, so what has been open longest stands tallest.
+      const lift = S.opts.ageLift ? ageLift(ageDays(pr.createdAt, Date.now())) : 0;
+      const top = Math.max(...cols.map((c) => c.z0 + c.total + capHeight(c))) + 6 + lift;
       want.set(pr.id, { pr, x, y, top });
     }
     for (const [id, f] of S.flags) if (!want.has(id)) { f.el.remove(); S.flags.delete(id); }
@@ -442,6 +445,7 @@ export function createScene(host, handlers = {}) {
     setHighlight(paths) { S.highlight = new Set(paths || []); refreshBuildings(); },
     info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov }),
     layout: () => S.layout,
+    flagHeights: () => Object.fromEntries([...S.flags].map(([id, f]) => [id, f.top])),
     dispose() { running = false; renderer.dispose(); host.removeChild(renderer.domElement); host.removeChild(overlay); },
   };
 }

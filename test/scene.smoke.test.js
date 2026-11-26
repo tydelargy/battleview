@@ -9,6 +9,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { sampleFiles, samplePRs } from '../server/sample.js';
 import { normalisePRs } from '../server/snapshot.js';
+import { ageLift } from '../web/filters.js';
 
 const FAKE_THREE = `
 export const DynamicDrawUsage = 35048, ACESFilmicToneMapping = 4, PCFSoftShadowMap = 2;
@@ -54,7 +55,7 @@ test('scene wiring with a stand-in three', async () => {
   const tdir = path.join(dir, 'node_modules/three'); fs.mkdirSync(path.join(tdir, 'examples/jsm/controls'), { recursive: true });
   fs.writeFileSync(path.join(tdir, 'package.json'), JSON.stringify({ name: 'three', type: 'module', exports: { '.': './index.js', './addons/*': './examples/jsm/*' } }));
   fs.writeFileSync(path.join(tdir, 'index.js'), FAKE_THREE); fs.writeFileSync(path.join(tdir, 'examples/jsm/controls/OrbitControls.js'), FAKE_ORBIT);
-  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
+  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
   fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
 
   const frames = []; globalThis.requestAnimationFrame = (f) => { frames.push(f); return frames.length; };
@@ -107,6 +108,19 @@ test('scene wiring with a stand-in three', async () => {
   sc.setUI({ watched: true }); assert.equal(sc.info().watched, 2);
   sc.setFiles(files); assert.equal(sc.info().watched, 2, 'survives a snapshot refresh');
   sc.setWatched([]); assert.equal(frames4(), 0);
+
+  // flags can be raised by age: older PRs get taller poles, by the same amount the pure model says; off means no lift
+  const aged = prs.map((p, i) => ({ ...p, createdAt: new Date(Date.now() - (i === 0 ? 30 : 0.1) * 86400_000).toISOString() }));
+  sc.setPRs(aged, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {}, ageLift: false });
+  const flat = sc.flagHeights();
+  sc.setPRs(aged, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {}, ageLift: true });
+  const lifted = sc.flagHeights();
+  assert.ok(Math.abs(lifted[aged[0].id] - flat[aged[0].id] - ageLift(30)) < 1e-6, 'a month-old PR is lifted by ageLift(30)');
+  assert.ok(lifted[aged[1].id] - flat[aged[1].id] < ageLift(30) / 5, 'a fresh one barely moves');
+  sc.setPRs(aged, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {}, ageLift: false });
+  assert.deepEqual(sc.flagHeights(), flat, 'switching it off puts them back');
+  sc.setPRs(prs, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {}, ageLift: true });   // no createdAt at all: no lift, no crash
+  assert.ok(Object.values(sc.flagHeights()).every(Number.isFinite));
 
   // filter by visibility
   sc.setPRs(prs, { mode: 'log', focusId: null, visible: new Set(['#2302']), fog: true, statusColors: {} });

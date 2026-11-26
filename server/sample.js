@@ -25,8 +25,9 @@ export function sampleFiles() {
 
 const f = (path, add, del) => ({ path, add, del });
 export function samplePRs() {
-  // Staggered "last updated" times, so the track list has a recent-activity order to show.
-  return SAMPLE.map((p, i) => ({ ...p, updatedAt: new Date(Date.now() - (2 + i * 7) * 3600e3).toISOString() }));
+  // Staggered times, so recent activity and age have something to show: updated hours ago, opened hours to days before that.
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+  return SAMPLE.map((p, i) => ({ ...p, updatedAt: ago(2 + i * 7), createdAt: ago(8 + i * 31) }));
 }
 const SAMPLE = [
   { id: '#2291', number: 2291, title: 'ENG-412 Proration engine rewrite', branch: 'maya/ENG-412-proration', author: 'maya', status: 'changes_requested', files: [f('packages/core/domain/pricing.ts', 420, 310), f('apps/api/routes/billing.ts', 88, 40), f('packages/core/domain/ledger.ts', 60, 12), f('apps/web/pages/billing.tsx', 30, 8)] },

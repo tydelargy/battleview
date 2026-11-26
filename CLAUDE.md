@@ -6,9 +6,9 @@ A local, single-user tool: a tactical map of a codebase (files are buildings, fo
 
 ```
 npm test                 # unit, server and scene-wiring tests. Fast. No browser.
-npm run e2e              # real Chrome against a real server: Jira flows, then PR tracking
+npm run e2e              # real Chrome against a real server: Jira flows, PR tracking, filters and sorting
 npm start | npm run mock # sample repo and PRs | the same plus a fake Jira
-SHOTS_DIR=docs/screenshots node e2e/shot2.mjs ...   # regenerate README screenshots (see the README)
+SHOTS_DIR=docs/screenshots node e2e/shot2.mjs readme   # regenerate every README screenshot
 ```
 
 Tests and e2e write scratch files to the system temp dir. Set `TMPDIR` if you want them somewhere specific. Never leave a server running after a test run; the e2e scripts clean up after themselves.
@@ -27,6 +27,7 @@ server/feedwatch.js       watches the feed's DIRECTORY, because a watch on the f
 server/watch.js           which PRs are tracked (picks, author and path rules, ended PRs). PURE matching + a small file-backed store
 server/config.js          config file (0600), Jira settings validation, token redaction
 web/layout.js spires.js sigil.js    PURE geometry and identity. No DOM, no three. Unit tested
+web/filters.js            PURE filter and sort model ("needs attention first" is a tiered comparator; see `attentionTier`) for the PR tray and the map (one model: search, authors, status, age, needs-me, epic). Takes `now` as an argument
 web/scene.js              Three.js glue: instanced meshes, camera, SVG/HTML overlay. Only checked by a smoke test with a stand-in three
 web/main.js               panels, dialogs, settings. All feed data goes in through h()/fill() as text nodes, never HTML
 ```
@@ -36,10 +37,11 @@ web/main.js               panels, dialogs, settings. All feed data goes in throu
 - **No untrusted HTML.** PR titles, authors, branch names and rule values come from outside. Build DOM with `h()` and `fill()` (text nodes). Never `innerHTML` with feed data. `e2e/ui.mjs` has an XSS test; keep it passing.
 - **The token never reaches the browser.** `redact()` strips it. Don't add a field to `/api/config` or the snapshot without checking it.
 - **Writes need `X-Battlemap: 1` and a same-origin Origin; the Host header is checked.** There is no login: it binds to 127.0.0.1 and must never be bound publicly. Single-user, local by design.
-- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js`, the matching functions in `watch.js` and the provider mappers take data and return data. If you need the clock, a file or the network, pass it in.
+- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js`, `filters.js`, the matching functions in `watch.js` and the provider mappers take data and return data. If you need the clock, a file or the network, pass it in.
 - **The feed is the full set of open PRs.** `server/watch.js` treats a tracked PR that disappears from the feed as ended (closed), so a partial feed ends PRs. Sync scripts must write the whole set, or nothing.
 - **Tracking is opt-in; muting wins.** A stopped (muted) PR stays off even when a rule matches. Finished PRs are only kept if they were open and tracked, or picked. See the tests in `test/watch.test.js` before changing any of it.
 - **The built-in sample is never persisted** (no tracking state, no "was open" memory), and `--mock-jira` writes nothing to disk.
+- **"Click outside closes" must read `e.composedPath()`, not `e.target.closest()`.** Chips and buttons re-render their list on click, so by the time the click reaches the document the target is detached and looks like it was outside.
 - **A copy of the pure modules is loaded by the browser as-is** (no bundler). Use plain ES modules, no Node-only imports under `web/`.
 
 ## Conventions
@@ -55,4 +57,4 @@ This repo uses Jujutsu (`jj`). One commit per feature, stacked; fix-ups go into 
 
 ## Feed
 
-`battlemap --prs prs.json` reloads when the file changes. `battlemap-sync github` writes it from `gh`; the format is in the README. Fields the UI relies on beyond the basics: `updatedAt`, `createdAt`, `headSha` (to notice pushes), and `mine` (set by sync from the logged-in user). Sync tests use a stand-in `gh` script, never the network or a real account: keep it that way.
+`battlemap --prs prs.json` reloads when the file changes. `battlemap-sync github` writes it from `gh`; the format is in the README. Fields the UI relies on beyond the basics: `updatedAt` and `createdAt` (age filters, sorting, flag height), `waitingSince` (how long a PR has waited on us, for "needs attention first"; sync computes it, and a feed without it falls back to `updatedAt`), `headSha` (to notice pushes), and `mine` (set by sync from the logged-in user). Sync tests use a stand-in `gh` script, never the network or a real account: keep it that way.

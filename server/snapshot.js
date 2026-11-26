@@ -30,7 +30,7 @@ export function normalisePRs(input, identity = { prAuthors: ['you'] }) {
     });
     prs.push({
       id: String(raw.id), number: raw.number ?? null, title: String(raw.title || raw.id), branch: raw.branch || '', author: raw.author || 'unknown',
-      url: raw.url || null, ticket: raw.ticket || null, status, files, updatedAt: raw.updatedAt || null,
+      url: raw.url || null, ticket: raw.ticket || null, status, files, updatedAt: raw.updatedAt || null, createdAt: raw.createdAt || null, headSha: raw.headSha || null, waitingSince: raw.waitingSince || null,
       mine: raw.mine ?? identity.prAuthors.includes(raw.author),
       adds: files.reduce((a, f) => a + f.add, 0), dels: files.reduce((a, f) => a + f.del, 0),
     });

@@ -85,7 +85,7 @@ curl -X POST localhost:4747/api/prs -H 'X-Battlemap: 1' -H 'Content-Type: applic
 }]}
 ```
 
-`hunks` are optional and in file order; without them focus mode estimates a plausible split that still sums to the file totals (marked "estimated"). `ticket` is optional. Whether a PR "needs you" is decided in `server/snapshot.js` `needsReason()`; change it there.
+Also optional: `createdAt` and `updatedAt` (ages and sorting), `headSha` (so pushes are noticed exactly), `mine` (true for your own PRs), and `waitingSince` (when the PR started waiting on you: for your own PR, its oldest unaddressed comment; for someone else's PR in re-review, when you were asked to review again; without it, `updatedAt` stands in). `hunks` are optional and in file order; without them focus mode estimates a plausible split that still sums to the file totals (marked "estimated"). `ticket` is optional. Whether a PR "needs you" is decided in `server/snapshot.js` `needsReason()`; change it there.
 
 ## Layout
 
@@ -99,12 +99,37 @@ server/feedwatch.js     reload the feed file when it changes, even when replaced
 deploy/                 systemd units, an installer and a crontab line
 web/layout.js           deterministic treemap            (pure, tested)
 web/spires.js           spire + hunk geometry plan       (pure, tested)
+web/filters.js          filter, sort and age model       (pure, tested)
 web/sigil.js            flag number, author colour, epic emblem (pure, tested)
 web/scene.js            Three.js: instanced meshes, camera, overlay
 web/main.js             panels, settings, Jira actions
 ```
 
 `npm test` runs the suite (Jira client against the mock, server and security, layout and spire maths, flag sigils, a scene wiring smoke test). `npm run e2e` drives the real UI in Chrome against the mock (needs Playwright).
+
+## Filtering and sorting
+
+![The filter and sort panel, with the tray sorted by how long each PR has been open](docs/screenshots/filters.png)
+
+The **FILTER** chip opens a panel (or press `/` to jump straight to the search box). Everything in it is one model, so the tray, the header count and the map always agree about what is hidden:
+
+* **Search** title, author, PR number, ticket key, branch or epic. Every word has to match.
+* **Authors** (any of the ones you pick) and **status**, with how many PRs each has. Useful when there are no epics, or epics are not the useful cut.
+* **Age.** *Open for at least* (since the PR was created) and *Quiet for at least* (since its last update) find the old and the neglected. A PR with no date never matches an age filter.
+* **Sort** only changes the order of the cards in the tray; it hides nothing. The choices are needs attention first (the default), open longest, newest, recent activity, quiet longest, biggest change, and author. Merged and closed PRs always sink to the end.
+
+  **Needs attention first** puts the PRs in this order, each group by PR number where it is otherwise a tie:
+
+  1. **Waiting on us.** Someone else's PR in re-review, or one of ours with comments we have not addressed (a review or comment from someone else since our last push). The longest wait comes first, and on a close call (the same six hours) ours comes first. A card in this group says how long it has waited (`waiting 3d`).
+  2. **Everything else that needs us**: a first review request, our own PR ready to merge, our own red CI. The **oldest PR** first, whatever the age of the request, as a nudge to get the oldest things closed.
+  3. **Red CI** on someone else's PR.
+  4. **The rest.**
+  5. **Drafts**, at the back: they are allowed to be broken.
+* The **Needs me** chip and the epic chips are part of the same model. *Needs me* means a PR of yours that is red or ready to merge, or anyone's PR waiting on your review.
+
+Each card shows how old the PR is (`3d`, `2w`) next to the author, and clicking `@author` in a PR's panel shows only that author. Your choices are remembered between visits.
+
+**Raise flags by age** (Layers menu) lifts old PRs on taller poles, so the ones that have been open longest stand out on the map; it grows with the square root of the age, so a week and a month both read.
 
 ## Running it for real
 
@@ -124,7 +149,7 @@ battlemap-sync github --repo org/repo --out ~/.local/share/battlemap/prs.json
 battlemap-sync github --repo org/repo --host ghe.example.com --out ...      # Enterprise
 ```
 
-It maps each PR to a status (draft, red CI, changes requested, approved and green, re-review, review requested), marks the ones you opened as yours, and also includes PRs merged or closed in the last two days (`--ended-days`) so they show as MERGED or CLOSED instead of just vanishing. It writes the file atomically and, if GitHub cannot be reached, leaves the old file alone: a failed run never empties your map. Files per PR come from `gh`, which caps very large PRs; hunks are estimated.
+It maps each PR to a status (draft, red CI, changes requested, approved and green, re-review, review requested), marks the ones you opened as yours, works out exactly how long the PRs waiting on you have been waiting (for your own PRs and anyone's in re-review it reads their GitHub timeline: when you were re-requested for review, or when someone else's review or comment came in after your last push; twenty PRs per request, up to 100 PRs), and also includes PRs merged or closed in the last two days (`--ended-days`) so they show as MERGED or CLOSED instead of just vanishing. It writes the file atomically and, if GitHub cannot be reached, leaves the old file alone: a failed run never empties your map. Files per PR come from `gh`, which caps very large PRs; hunks are estimated.
 
 **3. Keep it fresh.** The server reloads the feed whenever the file changes (including when it is replaced atomically), and `--rescan <seconds>` re-reads the checkout so new and changed files appear.
 

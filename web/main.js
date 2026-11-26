@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { SCALES, TOPPERS, scaleTicks, DIFF_COLORS, MIN_COVER } from './spires.js';
 import { authorColor, epicEmblem, flagLabel, EMBLEMS } from './sigil.js';
+import { SORTS, SORT_HELP, AGE_STEPS, waitingDays, emptyFilters, normaliseFilters, applyFilters, sortPRs, activeCount, anyFilter, describeFilters, ageDays, formatAge } from './filters.js';
 
 const STATUS = {
   review_requested: { label: 'REVIEW', color: '#5ab0ff', glyph: '?' },
@@ -36,7 +37,7 @@ function fill(el, ...kids) {
 }
 const initials = (a) => (a.replace(/[^A-Za-z0-9 ._-]/g, '').split(/[ ._-]+/).filter(Boolean).map((s) => s[0]).join('').slice(0, 2) || a.slice(0, 2)).toUpperCase();
 
-const state = { snap: null, sel: null, needsOnly: false, epic: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, wmarks: ls.get('wmarks', true) };
+const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, wmarks: ls.get('wmarks', true) };
 
 /* ---------- scene (optional: the UI still works if WebGL or three is unavailable) ---------- */
 async function startScene() {
@@ -80,21 +81,31 @@ async function refresh() {
   state.snap = snap;
   const open = snap.prs.filter((p) => !p.ended), fresh = state.known ? open.filter((p) => !state.known.has(p.id) && viaRulesOnly(p)) : [];
   state.known = new Set(open.map((p) => p.id));
+  if (state.filters.epic && !snap.epics.includes(state.filters.epic)) { state.filters = { ...state.filters, epic: null }; ls.set('filters', state.filters); }
   if (fresh.length) toast(`${fresh.length} new PR${fresh.length > 1 ? 's' : ''} tracked by your rules: ${fresh.slice(0, 3).map((p) => p.number != null ? '#' + p.number : p.id).join(', ')}${fresh.length > 3 ? '…' : ''}`);
   if (state.sel && !snap.prs.some((p) => p.id === state.sel)) state.sel = null;
   renderAll(); applyScene(); state.trackRefresh?.();
 }
+/** What the tray and the map show, in order: the filter model decides both. */
 function visiblePRs() {
   const s = state.snap; if (!s) return [];
-  return s.prs.filter((p) => (!state.needsOnly || p.needs) && (!state.epic || p.epic === state.epic));
+  const now = Date.now();
+  return sortPRs(applyFilters(s.prs, state.filters, now), state.filters.sort, now);
 }
+function setFilters(patch) {
+  state.filters = normaliseFilters({ ...state.filters, ...patch });
+  ls.set('filters', state.filters);
+  if (state.sel && !visiblePRs().some((p) => p.id === state.sel)) state.sel = null;
+  renderAll(); applyScene(); state.filterRefresh?.();
+}
+const clearFilters = () => setFilters({ ...emptyFilters(), sort: state.filters.sort });
 function applyScene() {
   const sc = state.scene, s = state.snap; if (!sc || !s) return;
   sc.setFiles(s.files);
   sc.setUI({ labels: state.labels, flags: state.flags, lines: state.lines, watched: state.wmarks });
   sc.setWatched(s.watch.watchedPaths);
   const selPR = s.prs.find((p) => p.id === state.sel), live = visiblePRs().filter((p) => !p.ended);
-  sc.setPRs(s.prs, { mode: state.scale, topper: state.topper, focusId: selPR && !selPR.ended ? state.sel : null, visible: new Set(live.map((p) => p.id)), fog: state.fog, statusColors, view: state.view });
+  sc.setPRs(s.prs, { mode: state.scale, topper: state.topper, focusId: selPR && !selPR.ended ? state.sel : null, ageLift: state.ageLift, visible: new Set(live.map((p) => p.id)), fog: state.fog, statusColors, view: state.view });
 }
 function connectEvents() {
   const es = new EventSource('/api/events');
@@ -108,7 +119,7 @@ function renderAll() { renderHeader(); renderChips(); renderCards(); renderFocus
 function renderHeader() {
   const s = state.snap;
   const w = s.watch, open = s.prs.filter((p) => !p.ended).length;
-  $('sub').textContent = `${s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${w.mode === 'all' ? `${open} PRs` : `${open} tracked of ${w.feedCount} PRs`}${s.mock ? ' · MOCK JIRA' : ''}`;
+  $('sub').textContent = `${s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${w.mode === 'all' ? `${open} PRs` : `${open} tracked of ${w.feedCount} PRs`}${anyFilter(state.filters) ? ` · showing ${visiblePRs().filter((p) => !p.ended).length}` : ''}${s.mock ? ' · MOCK JIRA' : ''}`;
   const n = s.prs.filter((p) => p.needs).length, red = s.prs.filter((p) => p.status === 'ci_failing').length, rdy = s.prs.filter((p) => p.status === 'ready_to_merge').length;
   $('counters').replaceChildren(...[['NEEDS YOU', n, 'var(--accent)'], ['CI RED', red, 'var(--del)'], ['READY', rdy, 'var(--add)']].map(([l, v, c]) => h('div', { class: 'ctr' }, h('b', { style: `color:${c}` }, v), h('span', null, l))));
   const j = s.jira, dot = $('jiraDot'), txt = $('jiraTxt');
@@ -125,10 +136,14 @@ function renderChips() {
   const rules = s.watch.rules, label = (r) => (r.type === 'author' ? '@' + r.value : r.value);
   const pill = rules.length ? h('button', { class: 'chip watch', id: 'watchPill', title: `Watching, so matching PRs are tracked automatically:\n${rules.map((r) => `${r.type === 'author' ? 'author' : 'path'}  ${label(r)}  (${r.matches} open)`).join('\n')}\nClick to edit`, onclick: openTrack },
     `◉ WATCHING ${rules.slice(0, 2).map(label).join(' · ')}${rules.length > 2 ? ` +${rules.length - 2}` : ''}`) : null;
+  const nf = activeCount(state.filters), sorted = state.filters.sort !== 'attention';
+  const filterBtn = h('button', { class: 'chip', id: 'filterBtn', 'aria-pressed': String(nf > 0 || sorted), 'aria-expanded': String(!$('filters').hidden), title: 'Filter and sort the PRs (press / to search)',
+    onclick: (e) => { e.stopPropagation(); toggleFilters(); } }, `FILTER${nf ? ` · ${nf}` : ''}${sorted ? ` · ${SORTS[state.filters.sort].toUpperCase()}` : ''}`);
   fill(box,
     pill,
-    chip('Needs me', state.needsOnly, () => { state.needsOnly = !state.needsOnly; state.sel = null; renderAll(); applyScene(); }),
-    ...s.epics.map((e) => chip(e, state.epic === e, () => { state.epic = state.epic === e ? null : e; state.sel = null; renderAll(); applyScene(); })));
+    filterBtn,
+    chip('Needs me', state.filters.needs, () => setFilters({ needs: !state.filters.needs })),
+    ...s.epics.map((e) => chip(e, state.filters.epic === e, () => setFilters({ epic: state.filters.epic === e ? null : e }))));
 }
 
 const ruleBy = (p) => (p.tracked?.by || []).filter((b) => b.kind === 'author' || b.kind === 'path');
@@ -139,18 +154,17 @@ function viaChip(p) {
   const name = (b) => (b.kind === 'author' ? '@' + b.value : b.value);
   return h('span', { class: 'via', title: `Tracked because of your watch rule${r.length > 1 ? 's' : ''}: ${r.map(name).join(', ')}` }, `◉ ${name(r[0])}${r.length > 1 ? ` +${r.length - 1}` : ''}`);
 }
-const order = (p) => (p.needs ? 0 : 1) + (p.status === 'ci_failing' ? 0.2 : 0);
 function ticketLine(pr, s) {
   if (!pr.ticketKey) return h('div', { class: 'tk none' }, 'No ticket key');
   if (pr.ticket) return h('div', { class: 'tk' }, `${pr.ticketKey} · ${pr.ticket.status.name} · ${pr.ticket.assignee?.name || 'Unassigned'}`);
   return h('div', { class: 'tk none' }, s.jira.ok ? `${pr.ticketKey} (not found in Jira)` : `${pr.ticketKey} (Jira offline)`);
 }
 function renderCards() {
-  const s = state.snap, box = $('cards'), list = visiblePRs().sort((a, b) => !!a.ended - !!b.ended || order(a) - order(b) || a.id.localeCompare(b.id));
+  const s = state.snap, box = $('cards'), list = visiblePRs(), now = Date.now();
   const more = s.watch.availableTotal;
   const add = h('button', { class: 'card add', id: 'trackBtn', onclick: openTrack }, h('span', { class: 'plus' }, '+'), h('b', null, 'TRACK PRS'),
     h('span', { class: 'm' }, more ? `${more} more open in the feed` : 'Add by link, author or path'));
-  const none = s.prs.length ? 'No PRs match these filters.' : s.watch.mode === 'all' ? 'No pull requests yet. Feed some in with --prs or POST /api/prs (Settings > Data).' : s.watch.feedCount ? 'Nothing tracked yet. Your own PRs are tracked automatically; add others with + TRACK PRS.' : 'No pull requests yet. Feed some in with --prs or POST /api/prs (Settings > Data).';
+  const none = s.prs.length ? h('span', null, `Nothing matches: PRs ${describeFilters(state.filters, (x) => STATUS[x]?.label.toLowerCase() || x) || 'as filtered'}. `, h('button', { class: 'btn', id: 'clearFilters', onclick: clearFilters }, 'CLEAR FILTERS')) : s.watch.mode === 'all' ? 'No pull requests yet. Feed some in with --prs or POST /api/prs (Settings > Data).' : s.watch.feedCount ? 'Nothing tracked yet. Your own PRs are tracked automatically; add others with + TRACK PRS.' : 'No pull requests yet. Feed some in with --prs or POST /api/prs (Settings > Data).';
   box.replaceChildren(...(list.length ? list : [h('div', { class: 'empty' }, none)]).map((p) => {
     if (p.nodeType) return p;
     const st = STATUS[p.status];
@@ -158,8 +172,8 @@ function renderCards() {
       h('div', { class: 'r1' }, h('span', { class: 'pill' }, st.label), h('b', null, p.ticketKey || p.id), p.needs ? h('span', { class: 'need' }, 'NEEDS YOU') : null,
         p.ended ? h('span', { class: 'dismiss', role: 'button', tabindex: 0, title: 'Forget this PR', onclick: (e) => { e.stopPropagation(); dismissPR(p); }, onkeydown: (e) => { if (e.key === 'Enter') { e.stopPropagation(); dismissPR(p); } } }, 'DISMISS') : null),
       h('div', { class: 't' }, p.title),
-      h('div', { class: 'm' }, `@${p.author} · ${p.files.length} files · +${p.adds} −${p.dels}${p.epic ? ' · ' + p.epic : ''}`),
-      p.ended ? h('div', { class: 'tk none' }, p.endedInferred ? 'Left the feed: merged or closed' : `${st.label.toLowerCase()} ${ago(p.endedAt || p.updatedAt)}`) : ticketLine(p, s), h('div', { class: 'why' }, h('span', null, p.needs), viaChip(p)));
+      (() => { const age = formatAge(ageDays(p.createdAt, now)); return h('div', { class: 'm', title: p.createdAt ? `opened ${ago(p.createdAt)}${p.updatedAt ? `, updated ${ago(p.updatedAt)}` : ''}` : '' }, `@${p.author}${age ? ' · ' + age : ''} · ${p.files.length} files · +${p.adds} −${p.dels}${p.epic ? ' · ' + p.epic : ''}`); })(),
+      p.ended ? h('div', { class: 'tk none' }, p.endedInferred ? 'Left the feed: merged or closed' : `${st.label.toLowerCase()} ${ago(p.endedAt || p.updatedAt)}`) : ticketLine(p, s), h('div', { class: 'why' }, h('span', null, (() => { const w = waitingDays(p, now); return w == null ? p.needs : `waiting ${formatAge(w)}${p.needs ? ' · ' + p.needs : ''}`; })()), viaChip(p)));
   }), add);
 }
 
@@ -217,7 +231,7 @@ function renderFocus() {
   }
   fill(box,
     h('button', { class: 'x', 'aria-label': 'Exit focus', onclick: () => selectPR(null) }, 'ESC'),
-    h('span', { class: 'pill', style: `--st:${st.color}` }, st.label), ' ', h('span', { class: 'sub' }, `${pr.id} · @${pr.author}`),
+    h('span', { class: 'pill', style: `--st:${st.color}` }, st.label), ' ', h('span', { class: 'sub' }, `${pr.id} · `, h('button', { class: 'linkish', id: 'onlyAuthor', title: `Show only @${pr.author}`, onclick: () => setFilters({ authors: [pr.author] }) }, `@${pr.author}`)),
     h('h2', null, pr.title),
     pr.needs ? h('div', { style: 'color:var(--accent)' }, pr.needs) : null,
     pr.ended ? trackingBlock(pr) : null,      // an ended PR's only action is dismissing it, so it goes first
@@ -271,11 +285,13 @@ function renderLayers() {
       toggle('Fog of war (dim idle files)', state.fog, (v) => save('fog', v), 'l-fog'),
       toggle('File names', state.labels, (v) => save('labels', v), 'l-labels'),
       toggle('Mark watched files (cyan rim)', state.wmarks, (v) => save('wmarks', v), 'l-wmarks'),
-      toggle('PR flags', state.flags, (v) => save('flags', v), 'l-flags')));
+      toggle('PR flags', state.flags, (v) => save('flags', v), 'l-flags'),
+      toggle('Raise flags by age (older = taller)', state.ageLift, (v) => save('ageLift', v), 'l-agelift')));
 }
 function toggleLayers(force) {
   const box = $('layers'), open = force ?? box.hidden;
   box.hidden = !open; $('layersBtn').setAttribute('aria-expanded', String(open));
+  if (open) toggleFilters(false);
   if (open) renderLayers();
 }
 
@@ -298,7 +314,7 @@ function openKey() {
       h('h3', null, 'FOCUSED PR'),
       h('ul', null, sw(DIFF_COLORS.add, 'Added lines, one block per hunk'), sw(DIFF_COLORS.del, 'Deleted lines, one block per hunk (slightly narrower)'), h('li', null, 'Block heights are proportional to line counts. Other PRs turn to glass.'), h('li', null, 'Moving dotted lines run from the flag to every file the PR touches.')),
       h('h3', null, 'FLAGS AND MARKERS'),
-      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status, the number is the PR number.'), h('li', null, 'Emblem on the flag corner = epic. The shape and hue come from the epic name, so every PR in one epic wears the same emblem. No emblem means no epic:'), h('ul', { class: 'sw2 emb' }, EMBLEMS.map((shape) => h('li', null, h('span', { class: 'em', 'data-shape': shape, style: '--eh:200' })))), h('li', null, 'Gold pulse around a flag = needs you.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), sw('#4cc9f0', 'Cyan rim around a roof = a watch rule covers this file, so any PR that touches it is tracked. The WATCHING pill at the top lists your rules; a cyan tag on a card names the rule that tracked it.'), h('li', null, 'Fog of war dims files nobody is working on.')),
+      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status, the number is the PR number.'), h('li', null, 'Emblem on the flag corner = epic. The shape and hue come from the epic name, so every PR in one epic wears the same emblem. No emblem means no epic:'), h('ul', { class: 'sw2 emb' }, EMBLEMS.map((shape) => h('li', null, h('span', { class: 'em', 'data-shape': shape, style: '--eh:200' })))), h('li', null, 'Gold pulse around a flag = needs you.'), h('li', null, 'Layers > Raise flags by age lifts old PRs on taller poles, so the ones that have been open longest stand out. The number on a card (3d, 2w) is its age.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), sw('#4cc9f0', 'Cyan rim around a roof = a watch rule covers this file, so any PR that touches it is tracked. The WATCHING pill at the top lists your rules; a cyan tag on a card names the rule that tracked it.'), h('li', null, 'Fog of war dims files nobody is working on.')),
       h('h3', null, 'ALERTS (flag icon, top right)'),
       h('ul', null, h('li', null, 'Places where Jira and the PRs disagree: ticket Done but PR open, ticket To Do but PR up, ticket in review with no PR, PR with no ticket, unknown ticket key.'))));
 }
@@ -432,6 +448,44 @@ function dataPane(pane) {
     s.problems?.length ? [h('h3', null, 'LAST INGEST PROBLEMS'), h('pre', { class: 'code' }, s.problems.join('\n'))] : null);
 }
 
+/* ---------- filter and sort panel ---------- */
+function toggleFilters(force) {
+  const box = $('filters'), open = force ?? box.hidden;
+  box.hidden = !open; if (open) { toggleLayers(false); buildFilters(); } else state.filterRefresh = null;
+  $('filterBtn')?.setAttribute('aria-expanded', String(open));
+}
+/** Built once per opening, so typing in the search box is never interrupted by a re-render. */
+function buildFilters() {
+  const q = h('input', { id: 'f-q', type: 'search', placeholder: 'Search title, author, ticket, branch', 'aria-label': 'Search', value: state.filters.q, oninput: (e) => setFilters({ q: e.target.value }) });
+  const sort = h('select', { id: 'f-sort', 'aria-label': 'Sort by', onchange: (e) => setFilters({ sort: e.target.value }) }, Object.entries(SORTS).map(([k, v]) => h('option', { value: k }, v)));
+  const age = (id, label, key) => h('select', { id, 'aria-label': label, onchange: (e) => setFilters({ [key]: Number(e.target.value) }) }, AGE_STEPS.map(([d, t]) => h('option', { value: d }, t)));
+  const open = age('f-open', 'Open for at least', 'openDays'), quiet = age('f-quiet', 'Quiet for at least', 'quietDays');
+  const sortHelp = h('small', { class: 'sub', id: 'f-sort-help' });
+  const authors = h('div', { class: 'fchips' }), statuses = h('div', { class: 'fchips' }), summary = h('small', { class: 'sub' });
+  const toggleIn = (key, v) => () => { const cur = state.filters[key]; setFilters({ [key]: cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v] }); };
+  state.filterRefresh = () => {
+    const s = state.snap, f = state.filters, liveP = s.prs.filter((p) => !p.ended);
+    sort.value = f.sort; sortHelp.textContent = SORT_HELP[f.sort]; open.value = String(f.openDays); quiet.value = String(f.quietDays);
+    const count = (get) => { const m = new Map(); for (const p of liveP) m.set(get(p), (m.get(get(p)) || 0) + 1); return m; };
+    const byAuthor = count((p) => p.author);
+    for (const a of f.authors) if (!byAuthor.has(a)) byAuthor.set(a, 0);       // a chosen author with no PRs right now can still be un-chosen
+    fill(authors, [...byAuthor].sort((a, b) => a[0].localeCompare(b[0])).map(([a, n]) => h('button', { class: 'chip', 'aria-pressed': String(f.authors.includes(a)), onclick: toggleIn('authors', a) }, `@${a} ${n}`)));
+    const byStatus = count((p) => p.status);
+    fill(statuses, Object.entries(STATUS).filter(([, v]) => !v.ended).map(([k, v]) => h('button', { class: 'chip', style: `--st:${v.color}`, 'aria-pressed': String(f.statuses.includes(k)), onclick: toggleIn('statuses', k) }, `${v.label} ${byStatus.get(k) || 0}`)));
+    summary.textContent = `Showing ${visiblePRs().length} of ${s.prs.length}${anyFilter(f) ? '' : ' (no filters on)'}`;
+  };
+  fill($('filters'),
+    h('div', { class: 'fhead' }, h('h3', null, 'FILTER & SORT'), h('button', { class: 'btn', id: 'f-clear', onclick: clearFilters }, 'CLEAR')),
+    q,
+    h('div', { class: 'lyr' }, h('h3', null, 'SORT'), sort, sortHelp),
+    h('div', { class: 'lyr' }, h('h3', null, 'AUTHORS'), authors),
+    h('div', { class: 'lyr' }, h('h3', null, 'STATUS'), statuses),
+    h('div', { class: 'lyr' }, h('h3', null, 'AGE'), h('div', { class: 'two' }, h('div', { class: 'fld' }, h('label', null, 'Open for at least'), open), h('div', { class: 'fld' }, h('label', null, 'Quiet for at least'), quiet)),
+      h('small', { class: 'sub' }, 'Open is time since the PR was created; quiet is time since its last update. A PR with no date never matches an age filter.')),
+    summary);
+  state.filterRefresh();
+}
+
 /* ---------- tracking: which PRs from the feed get a place on the map ---------- */
 const ago = (iso) => {
   const t = Date.parse(iso || ''); if (!t) return 'unknown';
@@ -527,11 +581,15 @@ $('jiraPill').onclick = () => openSettings('jira');
 $('layersBtn').onclick = (e) => { e.stopPropagation(); toggleLayers(); };
 $('keyBtn').onclick = openKey;
 $('homeBtn').onclick = () => { const p = state.sel; p ? state.scene?.flyToPR(p) : state.scene?.flyHome(); };
-addEventListener('click', (e) => { if (!$('layers').hidden && !e.target.closest('#layers')) toggleLayers(false); });
+// "Click outside closes". The path is read from the event, not the target: clicking a chip re-renders the list, so by the time
+// the click reaches here the clicked element has been detached and target.closest() would wrongly say it was outside.
+const clickedIn = (e, ...ids) => e.composedPath().some((n) => ids.includes(n.id));
+addEventListener('click', (e) => { if (!$('layers').hidden && !clickedIn(e, 'layers')) toggleLayers(false); if (!$('filters').hidden && !clickedIn(e, 'filters', 'filterBtn')) toggleFilters(false); });
 $('settingsBtn').onclick = () => openSettings('jira');
 addEventListener('keydown', (e) => {
+  if (e.key === '/' && modal.hidden && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) { e.preventDefault(); toggleFilters(true); $('f-q')?.focus(); return; }
   if (e.key !== 'Escape') return;
-  if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.sel) selectPR(null);
+  if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('filters').hidden) toggleFilters(false); else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.sel) selectPR(null);
 });
 window.battlemap = { state, selectPR, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
 

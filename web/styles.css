@@ -228,3 +228,16 @@ pre.code{background:#0a0f16;border:1px solid var(--line);border-radius:6px;paddi
 .card .why{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .card .why span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card .why .via{flex:none;max-width:130px}
+
+/* Filter and sort panel, and the small controls inside it */
+#filters{position:absolute;left:14px;top:108px;width:min(340px,calc(100% - 28px));max-height:calc(100% - 330px);overflow:auto;background:color-mix(in srgb,var(--panel) 97%,transparent);border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;z-index:5;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+#filters[hidden]{display:none}
+#filters input,#filters select{width:100%}
+.fhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.fhead h3{font:600 10px var(--display);letter-spacing:.14em;color:var(--accent);margin:0}
+.fchips{display:flex;flex-wrap:wrap;gap:5px}
+.fchips .chip{padding:4px 9px;font-size:10.5px}
+.fchips .chip[aria-pressed="true"][style]{border-color:var(--st);color:var(--st)}
+#filters .fld{margin-bottom:6px}
+.linkish{background:none;border:0;padding:0;color:var(--info);font:inherit;cursor:pointer;text-decoration:underline}
+.empty .btn{margin-left:6px}
+@media (max-width:640px){#filters{top:140px;max-height:calc(100% - 140px - 190px)}}
