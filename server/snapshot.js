@@ -2,7 +2,7 @@
 // derives "drift" insights: places where PR reality and ticket state disagree.
 import { synthHunks } from './hunks.js';
 
-export const STATUSES = ['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge', 'draft'];
+export const STATUSES = ['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge', 'draft', 'merged', 'closed'];
 
 export function needsReason(p) {
   if (p.mine) {
@@ -48,15 +48,17 @@ export function extractKey(pr, pattern) {
 const PR_ACTIVE = new Set(['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge']);
 const PR_REVIEWABLE = new Set(['review_requested', 're_review', 'ready_to_merge']);
 
-export function buildSnapshot({ files, prs, jira, cfg }) {
+export function buildSnapshot({ files, prs, ended = [], jira, cfg }) {
   const pattern = cfg.jira.keyPattern;
   const issues = jira?.issues || new Map();
   const jiraOn = !!jira?.ok;
-  const outPRs = prs.map((p) => {
+  const join = (p) => {
     const key = extractKey(p, pattern);
     const issue = key ? issues.get(key) || null : null;
     return { ...p, ticketKey: key, ticket: issue ? { ...issue } : null, needs: needsReason(p), epic: issue?.epic?.name || null };
-  });
+  };
+  const outPRs = prs.map(join);
+  const endedOut = ended.map((p) => ({ ...join(p), ended: true }));   // shown as cards, kept out of the drift checks
 
   const insights = [];
   const add = (kind, severity, title, detail, extra = {}) => insights.push({ id: `${kind}:${extra.prIds?.[0] || extra.keys?.[0] || insights.length}`, kind, severity, title, detail, prIds: [], keys: [], ...extra });
@@ -91,7 +93,7 @@ export function buildSnapshot({ files, prs, jira, cfg }) {
   return {
     generatedAt: new Date().toISOString(),
     files,
-    prs: outPRs,
+    prs: [...outPRs, ...endedOut],
     epics: [...epicNames].sort(),
     insights,
     jira: {

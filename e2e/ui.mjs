@@ -66,12 +66,12 @@ try {
   });
   await step('Needs me and epic chips filter the tray', async () => {
     await page.keyboard.press('Escape');
-    const total = (await page.$$('.card')).length;
+    const total = (await page.$$('.card[data-id]')).length;
     await page.click('.chip:has-text("Needs me")');
-    const n = (await page.$$('.card')).length; assert.ok(n < total && n >= 4, `needs ${n}/${total}`);
+    const n = (await page.$$('.card[data-id]')).length; assert.ok(n < total && n >= 4, `needs ${n}/${total}`);
     await page.click('.chip:has-text("Needs me")');
     await page.click('.chip:has-text("Infra cutover")');
-    assert.equal((await page.$$('.card')).length, 2);
+    assert.equal((await page.$$('.card[data-id]')).length, 2);
     await page.click('.chip:has-text("Infra cutover")');
   });
   await step('settings: wrong token explains itself; right token and detect fields work', async () => {
@@ -103,19 +103,30 @@ try {
     await page.waitForFunction(() => /Applied for this session/.test(document.querySelector('.foot .msg').textContent));
   });
   // desktop layout screenshot with a focused PR
-  await page.screenshot({ path: '/tmp/ui-shot.png' });
+  await page.screenshot({ path: path.join(os.tmpdir(), 'ui-shot.png') });
   const d = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await d.goto(`http://127.0.0.1:${port}/`); await d.waitForSelector('.card'); await d.waitForTimeout(800);
-  await d.click('.card[data-id="#2291"]'); await d.waitForTimeout(400); await d.screenshot({ path: '/tmp/ui-desktop.png' });
-  await d.click('#settingsBtn'); await d.waitForTimeout(300); await d.screenshot({ path: '/tmp/ui-settings.png' });
-  await step('XSS: hostile PR titles render as text', async () => {
+  await d.click('.card[data-id="#2291"]'); await d.waitForTimeout(400); await d.screenshot({ path: path.join(os.tmpdir(), 'ui-desktop.png') });
+  await d.click('#settingsBtn'); await d.waitForTimeout(300); await d.screenshot({ path: path.join(os.tmpdir(), 'ui-settings.png') });
+  await step('XSS: hostile PR titles and handles render as text, including in the track dialog and rule UI', async () => {
     await page.keyboard.press('Escape');
     const evil = '<img src=x onerror="window.__pwned=1">';
     await fetch(`http://127.0.0.1:${port}/api/prs`, { method: 'POST', headers: { 'X-Battlemap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify([{ id: '#9', title: evil, author: '<b>x</b>', status: 'ready_to_merge', files: [{ path: 'apps/api/routes/auth.ts', add: 1, del: 1 }] }]) });
+    // Not yours, so it is offered in the track dialog rather than drawn. The dialog must show it as text.
+    await page.click('#trackBtn');
+    await page.waitForFunction((t) => [...document.querySelectorAll('.arow .ainfo')].some((e) => e.textContent.includes(t)), evil, { timeout: 5000 });
+    assert.equal(await page.$$eval('#msheet img, #msheet b > b', (e) => e.length), 0);
+    // Track everything by that (hostile) author: the rule row, the WATCHING pill and the card tag all carry the handle.
+    await page.click('.arow .act .btn:nth-child(2)');
+    await page.waitForSelector('.rrow');
+    assert.equal(await page.$$eval('#msheet img, .rrow b b', (e) => e.length), 0);
+    await page.click('.mhead .btn');
     await page.waitForFunction((t) => document.querySelector('.card .t')?.textContent === t, evil, { timeout: 5000 });
+    assert.match(await page.textContent('#watchPill'), /<b>x<\/b>/, 'the pill shows the handle as text');
+    assert.match(await page.textContent('.card .via'), /<b>x<\/b>/);
     await page.click('.card'); await page.waitForTimeout(200);
     assert.equal(await page.evaluate(() => window.__pwned), undefined);
-    assert.equal(await page.$$eval('#cards img, #focus img', (e) => e.length), 0);
+    assert.equal(await page.$$eval('#cards img, #focus img, #chips img, #chips b b, #cards .via b', (e) => e.length), 0);
   });
   await step('no page errors', async () => assert.deepEqual(errors.filter((e) => !/three|dynamically|module/i.test(e)), []));
 } finally { await browser.close(); srv.kill(); }

@@ -96,6 +96,8 @@ export function createScene(host, handlers = {}) {
   const plateMesh = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ roughness: 0.95 }));
   const buildings = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0.05 }), { cast: true });
   const rims = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ color: 0xffb347, roughness: 0.6, emissive: 0x3a2400 }));
+  // Cyan frame on every file a path rule covers, so what you are watching stays visible even with no PR on it.
+  const watchRims = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ color: 0x4cc9f0, roughness: 0.4, emissive: 0x1f7a9e }));
   const boxes = new Pool(scene, unitBox, solid(), { cast: true });
   const caps = new Pool(scene, cone, solid(), { cast: true });
   const gBoxes = new Pool(scene, unitBox, glassMat());
@@ -119,7 +121,7 @@ export function createScene(host, handlers = {}) {
   // ---- state ----
   const S = {
     layout: null, filesKey: '', prs: [], opts: { mode: 'sqrt', topper: 'share', focusId: null, visible: null, fog: true, statusColors: {}, view: '3d' },
-    ui: { labels: true, flags: true, lines: 'selected' },
+    ui: { labels: true, flags: true, lines: 'selected', watched: true }, watched: new Set(),
     columns: [], growth: { t0: 0, dur: 520, active: false, p: 1 }, flags: new Map(), hover: null, highlight: new Set(), touched: new Set(), contested: new Set(), tween: null, size: { w: 1, h: 1 }, focusLabels: [],
   };
 
@@ -135,7 +137,7 @@ export function createScene(host, handlers = {}) {
     for (const f of files) { const t = f.path + ':' + f.loc + ':' + (f.complexity ?? 0); for (let i = 0; i < t.length; i++) { hsh ^= t.charCodeAt(i); hsh = Math.imul(hsh, 16777619); } }
     const key = files.length + ':' + (hsh >>> 0);
     S.layout = buildLayout(files);
-    if (key === S.filesKey) { refreshBuildings(); return; }
+    if (key === S.filesKey) { refreshBuildings(); drawWatch(); return; }
     S.filesKey = key;
     const L = S.layout;
     plateMesh.begin(L.plates.length);
@@ -145,7 +147,7 @@ export function createScene(host, handlers = {}) {
       plateMesh.push(_p.set(p.x + p.w / 2 - CX, 0, p.y + p.h / 2 - CY), _s.set(p.w, hgt, p.h), _c, p);
     }
     plateMesh.end();
-    refreshBuildings();
+    refreshBuildings(); drawWatch();
   }
 
   const statusColor = (st) => S.opts.statusColors[st] || '#8792a2';
@@ -160,6 +162,20 @@ export function createScene(host, handlers = {}) {
       buildings.push(_p.set(l.mx - CX, 0, l.my - CY), _s.set(l.r.w, l.height, l.r.h), _c, l);
     });
     buildings.end();
+  }
+
+  function drawWatch() {
+    const L = S.layout, shown = S.ui.watched && L ? [...S.watched].filter((p) => L.byPath.has(p)) : [];
+    watchRims.begin(shown.length * 4);
+    for (const path of shown) {
+      const l = L.byPath.get(path), r = l.r, t = 0.75, y = l.height - 0.3, x = l.mx - CX, z = l.my - CY;
+      watchRims.push(_p.set(x, y, z - r.h / 2 - t / 2), _s.set(r.w + t * 2, 0.9, t), _c.set(0xffffff), { path });
+      watchRims.push(_p.set(x, y, z + r.h / 2 + t / 2), _s.set(r.w + t * 2, 0.9, t), _c, { path });
+      watchRims.push(_p.set(x - r.w / 2 - t / 2, y, z), _s.set(t, 0.9, r.h), _c, { path });
+      watchRims.push(_p.set(x + r.w / 2 + t / 2, y, z), _s.set(t, 0.9, r.h), _c, { path });
+    }
+    watchRims.end();
+    S.watchedShown = shown.length;
   }
 
   // ---- diff layer ----
@@ -421,9 +437,10 @@ export function createScene(host, handlers = {}) {
 
   return {
     setFiles, setPRs, flyHome, flyToPR, flyToFile, setView,
-    setUI(u) { S.ui = { ...S.ui, ...u }; },
+    setUI(u) { const was = S.ui.watched; S.ui = { ...S.ui, ...u }; if (S.ui.watched !== was) drawWatch(); },
+    setWatched(paths) { S.watched = new Set(paths || []); drawWatch(); },
     setHighlight(paths) { S.highlight = new Set(paths || []); refreshBuildings(); },
-    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, fov: camera.fov }),
+    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov }),
     layout: () => S.layout,
     dispose() { running = false; renderer.dispose(); host.removeChild(renderer.domElement); host.removeChild(overlay); },
   };

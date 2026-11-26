@@ -197,3 +197,34 @@ pre.code{background:#0a0f16;border:1px solid var(--line);border-radius:6px;paddi
 
 .keyp .emb{grid-template-columns:repeat(6,28px)}
 .keyp .emb li{margin:0}
+
+/* Tracking: the + card, ended PRs, the track dialog, the file bar */
+.card.add{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:150px;border-style:dashed;border-top-width:1px;border-color:var(--line);background:transparent;color:var(--dim)}
+.card.add:hover,.card.add:focus-visible{border-color:var(--accent);color:var(--accent)}
+.card.add .plus{font:300 28px/1 var(--display)}.card.add b{font:600 11px var(--display);letter-spacing:.1em}
+.card.add .m{white-space:normal;text-align:center}
+.card.ended{opacity:.72;border-top-style:dashed}
+.dismiss{margin-left:auto;font:600 9px var(--display);letter-spacing:.08em;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:2px 6px;cursor:pointer}
+.dismiss:hover,.dismiss:focus-visible{color:var(--text);border-color:var(--text)}
+.msheet>.mpane{flex:1;min-height:0}
+.rrow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
+.rrow b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrow .rk{font:600 9px var(--display);letter-spacing:.1em;color:#0a0e13;background:var(--dim);border-radius:3px;padding:2px 5px}
+.arow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.arow .ainfo{flex:1;min-width:0}.arow .ainfo>div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arow .act{margin:0;flex:none}
+.mpane .sub{color:var(--dim)}
+.mpane small.sub{display:block;margin:6px 0;line-height:1.45}
+#filebar{position:absolute;left:50%;top:112px;transform:translateX(-50%);z-index:4;display:flex;align-items:center;gap:8px;max-width:calc(100% - 28px);background:color-mix(in srgb,var(--panel) 96%,transparent);border:1px solid var(--line);border-radius:8px;padding:6px 8px 6px 12px;font-size:11px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+#filebar[hidden]{display:none}
+#filebar b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@media (max-width:640px){.arow{flex-direction:column;align-items:stretch}#filebar{top:140px;flex-wrap:wrap}}
+
+/* Watch rules: the header pill, the "via" tag on cards */
+.chip.watch{border-color:#4cc9f0;color:#4cc9f0;background:color-mix(in srgb,#4cc9f0 10%,var(--panel));max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.via{font:600 9px var(--display);letter-spacing:.04em;color:#4cc9f0;border:1px solid #4cc9f0;border-radius:4px;padding:1px 5px;max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Header badges never wrap; the rule tag lives on the card's bottom line, right-aligned, where there is room */
+.r1 b,.need,.pill{white-space:nowrap;flex:none}
+.card .why{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card .why span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .why .via{flex:none;max-width:130px}

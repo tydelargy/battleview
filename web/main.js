@@ -9,6 +9,8 @@ const STATUS = {
   ci_failing: { label: 'CI RED', color: '#ff5d6c', glyph: '✕' },
   ready_to_merge: { label: 'READY', color: '#3ddc97', glyph: '✓' },
   draft: { label: 'DRAFT', color: '#8792a2', glyph: '…' },
+  merged: { label: 'MERGED', color: '#7b8cde', glyph: 'M', ended: true },
+  closed: { label: 'CLOSED', color: '#6b7686', glyph: '–', ended: true },
 };
 const statusColors = Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [k, v.color]));
 const $ = (id) => document.getElementById(id);
@@ -34,13 +36,13 @@ function fill(el, ...kids) {
 }
 const initials = (a) => (a.replace(/[^A-Za-z0-9 ._-]/g, '').split(/[ ._-]+/).filter(Boolean).map((s) => s[0]).join('').slice(0, 2) || a.slice(0, 2)).toUpperCase();
 
-const state = { snap: null, sel: null, needsOnly: false, epic: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null };
+const state = { snap: null, sel: null, needsOnly: false, epic: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, wmarks: ls.get('wmarks', true) };
 
 /* ---------- scene (optional: the UI still works if WebGL or three is unavailable) ---------- */
 async function startScene() {
   try {
     const { createScene } = await import('./scene.js');
-    state.scene = createScene($('stage'), { makeFlag, updateFlag, onPickPR: (id) => selectPR(state.sel === id ? null : id), onPickFile, onPickNothing: () => { if (state.sel) selectPR(null); hideTip(); }, onHover });
+    state.scene = createScene($('stage'), { makeFlag, updateFlag, onPickPR: (id) => selectPR(state.sel === id ? null : id), onPickFile, onPickNothing: () => { if (state.sel) selectPR(null); hideTip(); $('filebar').hidden = true; }, onHover });
     state.scene.setView(state.view, { instant: true });
     state.scene.setUI({ labels: state.labels, flags: state.flags, lines: state.lines });
   } catch (e) {
@@ -76,8 +78,11 @@ let pending = null;
 async function refresh() {
   const snap = await api.get('/api/snapshot');
   state.snap = snap;
+  const open = snap.prs.filter((p) => !p.ended), fresh = state.known ? open.filter((p) => !state.known.has(p.id) && viaRulesOnly(p)) : [];
+  state.known = new Set(open.map((p) => p.id));
+  if (fresh.length) toast(`${fresh.length} new PR${fresh.length > 1 ? 's' : ''} tracked by your rules: ${fresh.slice(0, 3).map((p) => p.number != null ? '#' + p.number : p.id).join(', ')}${fresh.length > 3 ? '…' : ''}`);
   if (state.sel && !snap.prs.some((p) => p.id === state.sel)) state.sel = null;
-  renderAll(); applyScene();
+  renderAll(); applyScene(); state.trackRefresh?.();
 }
 function visiblePRs() {
   const s = state.snap; if (!s) return [];
@@ -86,12 +91,14 @@ function visiblePRs() {
 function applyScene() {
   const sc = state.scene, s = state.snap; if (!sc || !s) return;
   sc.setFiles(s.files);
-  sc.setUI({ labels: state.labels, flags: state.flags, lines: state.lines });
-  sc.setPRs(s.prs, { mode: state.scale, topper: state.topper, focusId: state.sel, visible: new Set(visiblePRs().map((p) => p.id)), fog: state.fog, statusColors, view: state.view });
+  sc.setUI({ labels: state.labels, flags: state.flags, lines: state.lines, watched: state.wmarks });
+  sc.setWatched(s.watch.watchedPaths);
+  const selPR = s.prs.find((p) => p.id === state.sel), live = visiblePRs().filter((p) => !p.ended);
+  sc.setPRs(s.prs, { mode: state.scale, topper: state.topper, focusId: selPR && !selPR.ended ? state.sel : null, visible: new Set(live.map((p) => p.id)), fog: state.fog, statusColors, view: state.view });
 }
 function connectEvents() {
   const es = new EventSource('/api/events');
-  es.addEventListener('snapshot', () => { clearTimeout(pending); pending = setTimeout(refresh, 120); });
+  es.addEventListener('snapshot', () => { clearTimeout(pending); pending = setTimeout(() => refresh().catch(() => { /* server restarting: the reconnect sends a fresh snapshot event */ }), 120); });
   es.onerror = () => { /* the browser retries by itself */ };
 }
 
@@ -100,25 +107,38 @@ function renderAll() { renderHeader(); renderChips(); renderCards(); renderFocus
 
 function renderHeader() {
   const s = state.snap;
-  $('sub').textContent = `${s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${s.prs.length} PRs${s.mock ? ' · MOCK JIRA' : ''}`;
+  const w = s.watch, open = s.prs.filter((p) => !p.ended).length;
+  $('sub').textContent = `${s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${w.mode === 'all' ? `${open} PRs` : `${open} tracked of ${w.feedCount} PRs`}${s.mock ? ' · MOCK JIRA' : ''}`;
   const n = s.prs.filter((p) => p.needs).length, red = s.prs.filter((p) => p.status === 'ci_failing').length, rdy = s.prs.filter((p) => p.status === 'ready_to_merge').length;
   $('counters').replaceChildren(...[['NEEDS YOU', n, 'var(--accent)'], ['CI RED', red, 'var(--del)'], ['READY', rdy, 'var(--add)']].map(([l, v, c]) => h('div', { class: 'ctr' }, h('b', { style: `color:${c}` }, v), h('span', null, l))));
   const j = s.jira, dot = $('jiraDot'), txt = $('jiraTxt');
   dot.className = 'dot' + (!j.configured ? '' : j.error ? (j.ok ? ' warn' : ' bad') : j.ok ? ' ok' : ' warn');
   txt.textContent = !j.configured ? 'Connect Jira' : j.error ? (j.ok ? 'Jira stale' : 'Jira error') : j.ok ? (j.sprint?.name || 'Jira') : 'Jira…';
   $('jiraPill').title = !j.configured ? 'Jira is not configured' : j.error ? `${j.error}${j.hint ? ' — ' + j.hint : ''}` : `Connected to ${j.baseUrl} as ${j.user?.name || '?'} · ${j.ticketCount} tickets`;
-  const w = s.insights.filter((i) => i.severity === 'warn').length, b = $('alertCount');
-  b.hidden = !s.insights.length; b.textContent = w || s.insights.length; b.style.background = w ? 'var(--warn)' : 'var(--info)';
+  const warns = s.insights.filter((i) => i.severity === 'warn').length, b = $('alertCount');
+  b.hidden = !s.insights.length; b.textContent = warns || s.insights.length; b.style.background = warns ? 'var(--warn)' : 'var(--info)';
 }
 
 function renderChips() {
   const s = state.snap, box = $('chips');
   const chip = (label, on, fn) => h('button', { class: 'chip', 'aria-pressed': String(on), onclick: fn }, label);
-  box.replaceChildren(
+  const rules = s.watch.rules, label = (r) => (r.type === 'author' ? '@' + r.value : r.value);
+  const pill = rules.length ? h('button', { class: 'chip watch', id: 'watchPill', title: `Watching, so matching PRs are tracked automatically:\n${rules.map((r) => `${r.type === 'author' ? 'author' : 'path'}  ${label(r)}  (${r.matches} open)`).join('\n')}\nClick to edit`, onclick: openTrack },
+    `◉ WATCHING ${rules.slice(0, 2).map(label).join(' · ')}${rules.length > 2 ? ` +${rules.length - 2}` : ''}`) : null;
+  fill(box,
+    pill,
     chip('Needs me', state.needsOnly, () => { state.needsOnly = !state.needsOnly; state.sel = null; renderAll(); applyScene(); }),
     ...s.epics.map((e) => chip(e, state.epic === e, () => { state.epic = state.epic === e ? null : e; state.sel = null; renderAll(); applyScene(); })));
 }
 
+const ruleBy = (p) => (p.tracked?.by || []).filter((b) => b.kind === 'author' || b.kind === 'path');
+/** True when only watch rules, not you, put this PR on the map. */
+const viaRulesOnly = (p) => { const by = p.tracked?.by || []; return by.length > 0 && by.every((b) => b.kind === 'author' || b.kind === 'path'); };
+function viaChip(p) {
+  const r = !p.ended && viaRulesOnly(p) ? ruleBy(p) : []; if (!r.length) return null;
+  const name = (b) => (b.kind === 'author' ? '@' + b.value : b.value);
+  return h('span', { class: 'via', title: `Tracked because of your watch rule${r.length > 1 ? 's' : ''}: ${r.map(name).join(', ')}` }, `◉ ${name(r[0])}${r.length > 1 ? ` +${r.length - 1}` : ''}`);
+}
 const order = (p) => (p.needs ? 0 : 1) + (p.status === 'ci_failing' ? 0.2 : 0);
 function ticketLine(pr, s) {
   if (!pr.ticketKey) return h('div', { class: 'tk none' }, 'No ticket key');
@@ -126,16 +146,21 @@ function ticketLine(pr, s) {
   return h('div', { class: 'tk none' }, s.jira.ok ? `${pr.ticketKey} (not found in Jira)` : `${pr.ticketKey} (Jira offline)`);
 }
 function renderCards() {
-  const s = state.snap, box = $('cards'), list = visiblePRs().sort((a, b) => order(a) - order(b) || a.id.localeCompare(b.id));
-  if (!list.length) { box.replaceChildren(h('div', { class: 'empty' }, s.prs.length ? 'No PRs match these filters.' : 'No pull requests yet. Feed some in with --prs or POST /api/prs (Settings > Data).')); return; }
-  box.replaceChildren(...list.map((p) => {
+  const s = state.snap, box = $('cards'), list = visiblePRs().sort((a, b) => !!a.ended - !!b.ended || order(a) - order(b) || a.id.localeCompare(b.id));
+  const more = s.watch.availableTotal;
+  const add = h('button', { class: 'card add', id: 'trackBtn', onclick: openTrack }, h('span', { class: 'plus' }, '+'), h('b', null, 'TRACK PRS'),
+    h('span', { class: 'm' }, more ? `${more} more open in the feed` : 'Add by link, author or path'));
+  const none = s.prs.length ? 'No PRs match these filters.' : s.watch.mode === 'all' ? 'No pull requests yet. Feed some in with --prs or POST /api/prs (Settings > Data).' : s.watch.feedCount ? 'Nothing tracked yet. Your own PRs are tracked automatically; add others with + TRACK PRS.' : 'No pull requests yet. Feed some in with --prs or POST /api/prs (Settings > Data).';
+  box.replaceChildren(...(list.length ? list : [h('div', { class: 'empty' }, none)]).map((p) => {
+    if (p.nodeType) return p;
     const st = STATUS[p.status];
-    return h('button', { class: 'card', 'data-id': p.id, style: `--st:${st.color}`, 'aria-pressed': String(state.sel === p.id), onclick: () => selectPR(state.sel === p.id ? null : p.id) },
-      h('div', { class: 'r1' }, h('span', { class: 'pill' }, st.label), h('b', null, p.ticketKey || p.id), p.needs ? h('span', { class: 'need' }, 'NEEDS YOU') : null),
+    return h('button', { class: 'card' + (p.ended ? ' ended' : ''), 'data-id': p.id, style: `--st:${st.color}`, 'aria-pressed': String(state.sel === p.id), onclick: () => selectPR(state.sel === p.id ? null : p.id) },
+      h('div', { class: 'r1' }, h('span', { class: 'pill' }, st.label), h('b', null, p.ticketKey || p.id), p.needs ? h('span', { class: 'need' }, 'NEEDS YOU') : null,
+        p.ended ? h('span', { class: 'dismiss', role: 'button', tabindex: 0, title: 'Forget this PR', onclick: (e) => { e.stopPropagation(); dismissPR(p); }, onkeydown: (e) => { if (e.key === 'Enter') { e.stopPropagation(); dismissPR(p); } } }, 'DISMISS') : null),
       h('div', { class: 't' }, p.title),
       h('div', { class: 'm' }, `@${p.author} · ${p.files.length} files · +${p.adds} −${p.dels}${p.epic ? ' · ' + p.epic : ''}`),
-      ticketLine(p, s), h('div', { class: 'why' }, p.needs));
-  }));
+      p.ended ? h('div', { class: 'tk none' }, p.endedInferred ? 'Left the feed: merged or closed' : `${st.label.toLowerCase()} ${ago(p.endedAt || p.updatedAt)}`) : ticketLine(p, s), h('div', { class: 'why' }, h('span', null, p.needs), viaChip(p)));
+  }), add);
 }
 
 function selectPR(id, fly = true) {
@@ -195,6 +220,7 @@ function renderFocus() {
     h('span', { class: 'pill', style: `--st:${st.color}` }, st.label), ' ', h('span', { class: 'sub' }, `${pr.id} · @${pr.author}`),
     h('h2', null, pr.title),
     pr.needs ? h('div', { style: 'color:var(--accent)' }, pr.needs) : null,
+    pr.ended ? trackingBlock(pr) : null,      // an ended PR's only action is dismissing it, so it goes first
     h('div', { class: 'blk' }, h('h3', null, 'DIFF'),
       h('div', { class: 'sum' }, h('span', { class: 'a' }, `+${pr.adds}`), h('span', { class: 'd' }, `−${pr.dels}`), h('span', { class: 'sub' }, `${pr.files.length} files · ${hunks} hunks${synth ? ' (estimated)' : ''}`)),
       h('div', { class: 'bar' }, h('i', { class: 'a', style: `width:${(pr.adds / total) * 100}%` }), h('i', { class: 'd', style: `width:${(pr.dels / total) * 100}%` })),
@@ -206,6 +232,7 @@ function renderFocus() {
       }))),
     h('div', { class: 'blk' }, h('h3', null, 'JIRA'), ticket),
     actions,
+    pr.ended ? null : trackingBlock(pr),
     pr.url ? h('div', { class: 'blk' }, h('a', { href: pr.url }, 'Open pull request')) : null);
   const cm = document.getElementById('cmt'); if (cm && draft) { cm.value = draft; if (hadFocus) cm.focus(); }
 }
@@ -243,6 +270,7 @@ function renderLayers() {
     h('div', { class: 'lyr' }, h('h3', null, 'MAP'),
       toggle('Fog of war (dim idle files)', state.fog, (v) => save('fog', v), 'l-fog'),
       toggle('File names', state.labels, (v) => save('labels', v), 'l-labels'),
+      toggle('Mark watched files (cyan rim)', state.wmarks, (v) => save('wmarks', v), 'l-wmarks'),
       toggle('PR flags', state.flags, (v) => save('flags', v), 'l-flags')));
 }
 function toggleLayers(force) {
@@ -266,11 +294,11 @@ function openKey() {
         h('li', null, h('b', null, 'Width'), ` = the share of the file the PR changes: lines changed divided by the file's lines, at least ${Math.round(MIN_COVER * 100)}% so small edits show. Two PRs on one file split the roof.`),
         h('li', null, h('b', null, 'Height'), ` = lines changed (adds + deletes), one scale for the whole map. Now: ${SCALES[state.scale].label.toLowerCase()}; ${ticks.map((t) => `${t.lines} lines = ${t.height.toFixed(1)}`).join(', ')}.`),
         h('li', null, h('b', null, 'Colour'), ' = PR status:')),
-      h('ul', { class: 'sw2' }, Object.values(STATUS).map((v) => sw(v.color, `${v.label} ${v.glyph}`))),
+      h('ul', { class: 'sw2' }, Object.values(STATUS).filter((v) => !v.ended).map((v) => sw(v.color, `${v.label} ${v.glyph}`))),
       h('h3', null, 'FOCUSED PR'),
       h('ul', null, sw(DIFF_COLORS.add, 'Added lines, one block per hunk'), sw(DIFF_COLORS.del, 'Deleted lines, one block per hunk (slightly narrower)'), h('li', null, 'Block heights are proportional to line counts. Other PRs turn to glass.'), h('li', null, 'Moving dotted lines run from the flag to every file the PR touches.')),
       h('h3', null, 'FLAGS AND MARKERS'),
-      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status, the number is the PR number.'), h('li', null, 'Emblem on the flag corner = epic. The shape and hue come from the epic name, so every PR in one epic wears the same emblem. No emblem means no epic:'), h('ul', { class: 'sw2 emb' }, EMBLEMS.map((shape) => h('li', null, h('span', { class: 'em', 'data-shape': shape, style: '--eh:200' })))), h('li', null, 'Gold pulse around a flag = needs you.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), h('li', null, 'Fog of war dims files nobody is working on.')),
+      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status, the number is the PR number.'), h('li', null, 'Emblem on the flag corner = epic. The shape and hue come from the epic name, so every PR in one epic wears the same emblem. No emblem means no epic:'), h('ul', { class: 'sw2 emb' }, EMBLEMS.map((shape) => h('li', null, h('span', { class: 'em', 'data-shape': shape, style: '--eh:200' })))), h('li', null, 'Gold pulse around a flag = needs you.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), sw('#4cc9f0', 'Cyan rim around a roof = a watch rule covers this file, so any PR that touches it is tracked. The WATCHING pill at the top lists your rules; a cyan tag on a card names the rule that tracked it.'), h('li', null, 'Fog of war dims files nobody is working on.')),
       h('h3', null, 'ALERTS (flag icon, top right)'),
       h('ul', null, h('li', null, 'Places where Jira and the PRs disagree: ticket Done but PR open, ticket To Do but PR up, ticket in review with no PR, PR with no ticket, unknown ticket key.'))));
 }
@@ -291,6 +319,7 @@ function onHover(hit, x, y) {
   tip.style.left = Math.min(innerWidth - 310, x + 14) + 'px'; tip.style.top = Math.min(innerHeight - 90, y + 14) + 'px';
 }
 function onPickFile(path) {
+  showFileBar(path);
   const prs = state.snap.prs.filter((p) => p.files.some((f) => f.path === path));
   if (prs.length === 1) selectPR(prs[0].id, false); else if (prs.length > 1) toast(`${path.split('/').pop()}: ${prs.map((p) => p.ticketKey || p.id).join(', ')}. Tap a spire to focus one.`);
 }
@@ -301,7 +330,7 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = fals
 
 /* ---------- settings ---------- */
 const modal = $('modal'), sheet = $('msheet');
-const closeModal = () => { modal.hidden = true; };
+const closeModal = () => { modal.hidden = true; state.trackRefresh = null; };
 modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 
 async function openSettings(section = 'jira') {
@@ -396,11 +425,100 @@ function dataPane(pane) {
   const s = state.snap;
   const sample = JSON.stringify({ prs: [{ id: '#123', title: 'ENG-412 Fix proration', branch: 'maya/ENG-412-proration', author: 'maya', status: 'review_requested', url: 'https://github.com/org/repo/pull/123', files: [{ path: 'src/pricing.ts', add: 42, del: 7, hunks: [{ add: 30, del: 2 }, { add: 12, del: 5 }] }] }] }, null, 2);
   fill(pane, h('h3', null, 'CURRENT SOURCE'), h('p', null, s.sampleMode ? 'Built-in sample repo and PRs.' : `${s.files.length} files, ${s.prs.length} PRs.`),
-    h('h3', null, 'FEED PRS'), h('p', null, 'Point your existing integration at either of these. status is one of review_requested, re_review, changes_requested, ci_failing, ready_to_merge, draft. hunks are optional; without them focus mode estimates them.'),
+    h('h3', null, 'FEED PRS'), h('p', null, 'Point your existing integration at either of these. status is one of review_requested, re_review, changes_requested, ci_failing, ready_to_merge, draft, merged, closed. hunks are optional; without them focus mode estimates them. Send every open PR: the map only draws the ones you track, and a tracked PR that disappears from the feed is kept as closed until you dismiss it.'),
     h('pre', { class: 'code' }, 'battlemap --prs prs.json            # reloads when the file changes\ncurl -X POST localhost:4747/api/prs \\\n  -H "X-Battlemap: 1" -H "Content-Type: application/json" -d @prs.json'),
     h('pre', { class: 'code' }, sample),
     h('h3', null, 'MAP A REAL REPO'), h('pre', { class: 'code' }, 'battlemap --repo ~/code/my-project'),
     s.problems?.length ? [h('h3', null, 'LAST INGEST PROBLEMS'), h('pre', { class: 'code' }, s.problems.join('\n'))] : null);
+}
+
+/* ---------- tracking: which PRs from the feed get a place on the map ---------- */
+const ago = (iso) => {
+  const t = Date.parse(iso || ''); if (!t) return 'unknown';
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
+};
+const WHY = { mine: () => 'It is yours, so it is always tracked.', pick: () => 'You are tracking it.', all: () => 'Tracking everything in the feed.', author: (b) => `Author rule: everything by @${b.value}.`, path: (b) => `Path rule ${b.value} (touches ${b.file.split('/').pop()}).` };
+async function watchCall(method, path, body) {
+  const r = await api.send(method, path, body);
+  if (!r.ok) toast(r.error || 'Could not update tracking');
+  await refresh();
+  return r;
+}
+async function dismissPR(pr) { if (state.sel === pr.id) selectPR(null); await watchCall('POST', '/api/watch/dismiss', { id: pr.id }); }
+
+function trackingBlock(pr) {
+  if (pr.ended) return h('div', { class: 'blk' }, h('h3', null, 'TRACKING'),
+    h('p', { class: 'sub' }, pr.endedInferred ? 'This PR left the feed, so it was merged or closed. It stays here until you dismiss it.' : `This PR is ${pr.status}. It stays here until you dismiss it.`),
+    h('div', { class: 'act' }, h('button', { class: 'btn', id: 'dismissBtn', onclick: () => dismissPR(pr) }, 'DISMISS')));
+  const by = pr.tracked?.by || [], onlyMine = by.length > 0 && by.every((b) => b.kind === 'mine');
+  return h('div', { class: 'blk' }, h('h3', null, 'TRACKING'),
+    by.map((b) => h('p', { class: 'sub' }, WHY[b.kind](b))),
+    onlyMine ? null : h('div', { class: 'act' }, h('button', { class: 'btn', id: 'untrackBtn', onclick: async () => { selectPR(null); await watchCall('POST', '/api/watch/unpick', { id: pr.id }); toast(`Stopped tracking ${pr.id}`); } }, 'STOP TRACKING')));
+}
+
+function openTrack() {
+  modal.hidden = false;
+  const f = { q: '', author: '' };
+  const authorList = h('datalist', { id: 't-authors' });
+  const link = h('input', { id: 't-link', placeholder: 'Paste a pull request link or number', onkeydown: (e) => { if (e.key === 'Enter') linkGo.click(); } });
+  const linkGo = h('button', { class: 'btn primary', id: 't-link-go', onclick: async () => {
+    const r = await watchCall('POST', '/api/watch/pick', { ref: link.value });
+    if (r.ok) { link.value = ''; toast(r.matched ? `Tracking ${r.matched}` : `Waiting for PR ${r.key} to appear in the feed`); }
+  } }, 'TRACK');
+  const authIn = h('input', { id: 't-author', list: 't-authors', placeholder: 'Author handle, for example maya', onkeydown: (e) => { if (e.key === 'Enter') authGo.click(); } });
+  const authGo = h('button', { class: 'btn', id: 't-author-go', onclick: async () => { const r = await watchCall('POST', '/api/watch/rule', { type: 'author', value: authIn.value }); if (r.ok) authIn.value = ''; } }, 'ADD RULE');
+  const pathIn = h('input', { id: 't-path', placeholder: 'File, folder or glob: packages/billing/**', onkeydown: (e) => { if (e.key === 'Enter') pathGo.click(); } });
+  const pathGo = h('button', { class: 'btn', id: 't-path-go', onclick: async () => { const r = await watchCall('POST', '/api/watch/rule', { type: 'path', value: pathIn.value }); if (r.ok) pathIn.value = ''; } }, 'ADD RULE');
+  const q = h('input', { id: 't-q', type: 'search', placeholder: 'Filter by title, number or author', oninput: (e) => { f.q = e.target.value.toLowerCase(); renderLists(); } });
+  const sel = h('select', { id: 't-sel', 'aria-label': 'Author', onchange: (e) => { f.author = e.target.value; renderLists(); } });
+  const modeBox = h('div'), rulesBox = h('div'), listBox = h('div');
+
+  function renderLists() {
+    const s = state.snap, w = s.watch;
+    fill(modeBox, seg([['picked', 'Only what I track'], ['all', 'Everything in the feed']], w.mode, (v) => watchCall('PUT', '/api/watch/mode', { mode: v }), 'What to show'),
+      h('small', { class: 'sub' }, `${w.trackedCount} tracked of ${w.feedCount} open in the feed. Your own PRs are always tracked.`));
+    fill(authorList, w.authors.map((a) => h('option', { value: a })));
+    const rows = [...w.rules.map((r) => h('div', { class: 'rrow' }, h('span', { class: 'rk' }, r.type === 'author' ? 'AUTHOR' : 'PATH'), h('b', null, r.type === 'author' ? '@' + r.value : r.value),
+      h('span', { class: 'sub' }, `${r.matches} open${r.files != null ? ` · ${r.files} file${r.files === 1 ? '' : 's'}` : ''}`), h('button', { class: 'btn', 'aria-label': `Remove rule ${r.value}`, onclick: () => watchCall('POST', '/api/watch/unrule', { type: r.type, value: r.value }) }, 'REMOVE'))),
+      ...w.pendingPicks.map((k) => h('div', { class: 'rrow' }, h('span', { class: 'rk' }, 'WAITING'), h('b', null, `PR ${k}`), h('span', { class: 'sub' }, 'not in the feed yet'), h('button', { class: 'btn', onclick: () => watchCall('POST', '/api/watch/unpick', { id: k }) }, 'FORGET')))];
+    fill(rulesBox, rows.length ? rows : h('p', { class: 'sub' }, 'No rules yet. A rule tracks every PR that matches, now and when new ones are opened.'));
+    const authors = [...new Set(s.available.map((p) => p.author))].sort(), keep = f.author;
+    fill(sel, h('option', { value: '' }, 'All authors'), authors.map((a) => h('option', { value: a, selected: a === keep }, a)));
+    const hits = s.available.filter((p) => (!f.author || p.author === f.author) && (!f.q || `${p.id} ${p.title} ${p.author}`.toLowerCase().includes(f.q))), shown = hits.slice(0, 40);
+    fill(listBox,
+      shown.map((p) => h('div', { class: 'arow' },
+        h('div', { class: 'ainfo' }, h('div', null, h('b', null, p.number != null ? `#${p.number}` : p.id), ' ', p.title), h('small', { class: 'sub' }, `@${p.author} · ${p.files} files · +${p.adds} −${p.dels} · ${p.updatedAt ? ago(p.updatedAt) : STATUS[p.status]?.label.toLowerCase()}`)),
+        h('div', { class: 'act' }, h('button', { class: 'btn', onclick: () => watchCall('POST', '/api/watch/pick', { ref: p.id }) }, 'TRACK'),
+          h('button', { class: 'btn', title: `Track everything @${p.author} opens`, onclick: () => watchCall('POST', '/api/watch/rule', { type: 'author', value: p.author }) }, `+ @${p.author}`)))),
+      !shown.length ? h('p', { class: 'sub' }, s.available.length ? 'Nothing matches this filter.' : 'Every open PR in the feed is already tracked.') : null,
+      hits.length > shown.length ? h('p', { class: 'sub' }, `Showing ${shown.length} of ${hits.length}. Narrow the filter to see the rest.`) : null,
+      w.availableTotal > s.available.length ? h('p', { class: 'sub' }, `The feed has ${w.availableTotal} untracked PRs; the list holds the ${s.available.length} most recently updated.`) : null);
+  }
+  state.trackRefresh = renderLists;
+  fill(sheet,
+    h('div', { class: 'mhead' }, h('h2', null, 'TRACK PRS'), h('button', { class: 'btn', onclick: closeModal }, 'CLOSE')),
+    h('div', { class: 'mpane' },
+      modeBox,
+      h('h3', null, 'BY LINK'), h('div', { class: 'act' }, link, linkGo),
+      h('h3', null, 'RULES'), authorList,
+      h('div', { class: 'act' }, authIn, authGo), h('div', { class: 'act' }, pathIn, pathGo),
+      h('small', { class: 'sub' }, 'Path rules match any file a PR touches. A plain path covers that file or folder; * stays in one folder, ** crosses folders. You can also click a file on the map.'),
+      rulesBox,
+      h('h3', null, 'OPEN IN THE FEED, MOST RECENTLY UPDATED FIRST'), h('div', { class: 'act' }, q, sel), listBox));
+  renderLists();
+}
+
+function showFileBar(path) {
+  const bar = $('filebar'), w = state.snap.watch, dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : null;
+  const rule = (v) => w.rules.some((r) => r.type === 'path' && r.value === v);
+  const toggleRule = (v) => async () => { await watchCall('POST', rule(v) ? '/api/watch/unrule' : '/api/watch/rule', { type: 'path', value: v }); showFileBar(path); };
+  fill(bar, h('b', null, path),
+    h('button', { class: 'btn', id: 'fb-file', onclick: toggleRule(path) }, rule(path) ? 'STOP WATCHING FILE' : 'WATCH FILE'),
+    dir ? h('button', { class: 'btn', id: 'fb-dir', onclick: toggleRule(dir) }, rule(dir) ? 'STOP WATCHING FOLDER' : 'WATCH FOLDER') : null,
+    h('button', { class: 'btn', 'aria-label': 'Close', onclick: () => { bar.hidden = true; } }, '✕'));
+  bar.title = 'Any PR that touches a watched path is tracked automatically';
+  bar.hidden = false;
 }
 
 /* ---------- wiring ---------- */
@@ -413,9 +531,9 @@ addEventListener('click', (e) => { if (!$('layers').hidden && !e.target.closest(
 $('settingsBtn').onclick = () => openSettings('jira');
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.sel) selectPR(null);
+  if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.sel) selectPR(null);
 });
-window.battlemap = { state, selectPR, refresh, openSettings };   // handy in the console and in tests
+window.battlemap = { state, selectPR, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
 
 await startScene();
 await refresh();

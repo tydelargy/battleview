@@ -98,6 +98,16 @@ test('scene wiring with a stand-in three', async () => {
   assert.ok(sc.info().columns > 512, 'beyond the initial instance capacity');
   assert.ok(meshes().some((m) => m.cap > 512), 'pools were reallocated');
 
+  // watched files get a four-piece frame each; unknown paths are ignored; the layer can be switched off
+  sc.setWatched(['apps/web/pages/billing.tsx', 'packages/core/domain/pricing.ts', 'no/such/file.ts']);
+  assert.equal(sc.info().watched, 2);
+  const frames4 = () => meshes().filter((m) => m.geometry.constructor.name === 'BoxGeometry' && m.material.emissive === 0x1f7a9e).reduce((a, m) => a + m.count, 0);
+  assert.equal(frames4(), 8, 'four edges per watched file');
+  sc.setUI({ watched: false }); assert.equal(sc.info().watched, 0); assert.equal(frames4(), 0);
+  sc.setUI({ watched: true }); assert.equal(sc.info().watched, 2);
+  sc.setFiles(files); assert.equal(sc.info().watched, 2, 'survives a snapshot refresh');
+  sc.setWatched([]); assert.equal(frames4(), 0);
+
   // filter by visibility
   sc.setPRs(prs, { mode: 'log', focusId: null, visible: new Set(['#2302']), fog: true, statusColors: {} });
   await run(3);

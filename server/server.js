@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { ConfigStore, redact, normaliseJiraPatch } from './config.js';
 import { createJiraClient, syncJira, JiraError } from './jira/client.js';
 import { buildSnapshot, normalisePRs, extractKey } from './snapshot.js';
+import { WatchStore, classify, reconcileEnded, matchPath, watchedFiles } from './watch.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -21,22 +22,50 @@ function findThree() {
   return null;
 }
 
-export function createApp({ store = new ConfigStore(), files = [], prs = [], sampleMode = false, log = () => {} } = {}) {
+export function createApp({ store = new ConfigStore(), watch, files = [], prs = [], sampleMode = false, log = () => {} } = {}) {
   const threeDir = findThree();
+  // Tracking choices sit next to the config. Mock Jira runs never write to disk, and neither do their picks.
+  watch = watch || new WatchStore({ file: store.file.replace(/(\.json)?$/, '.watch.json'), persist: store.persist && !store.runtimeOverride });
   const app = {
     store, files, sampleMode, problems: [], prs: [], jira: null, jiraError: null,
     sse: new Set(), version: 0, timer: null, server: null,
+    // Seed with what was tracked last time, so PRs that ended while we were down are noticed. Not in sample mode.
+    view: { mode: 'picked', live: sampleMode ? [] : watch.get().live.map((p) => ({ ...p, tracked: { by: [] } })), ended: [], available: [], availableTotal: 0 },
   };
+
+  /** A real feed replaces the built-in sample. The sample's PRs are not "tracked work that ended", so forget them. */
+  function leaveSample() { if (app.sampleMode) { app.sampleMode = false; app.view = { ...app.view, live: [] }; } }
+
+  /** Re-derive what is tracked from the feed and the watch choices, and keep ended PRs around. */
+  function reconcile() {
+    const w = watch.get();
+    const c = classify({ prs: app.prs, watch: w, sampleMode: app.sampleMode, prevLiveIds: new Set(app.view.live.map((p) => p.id)) });
+    const ended = reconcileEnded({ prevLive: app.view.live, feed: app.prs, endedFromFeed: c.endedFromFeed, stored: w.ended, muted: w.muted });
+    watch.setEnded(ended);
+    if (!app.sampleMode) watch.setLive(c.live);
+    app.view = { mode: c.mode, live: c.live, ended, available: c.available, availableTotal: c.availableTotal };
+  }
 
   function setPRs(input) {
     const { prs: list, problems } = normalisePRs(input, store.get().identity);
     app.prs = list; app.problems = problems;
+    reconcile();
     return { count: list.length, problems };
   }
   setPRs(prs);
 
-  const prKeys = () => app.prs.map((p) => extractKey(p, store.get().jira.keyPattern)).filter(Boolean);
-  const snapshot = () => ({ ...buildSnapshot({ files: app.files, prs: app.prs, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, problems: app.problems, mock: !!store.runtimeOverride });
+  const prKeys = () => [...app.view.live, ...app.view.ended].map((p) => extractKey(p, store.get().jira.keyPattern)).filter(Boolean);
+  const watchInfo = () => {
+    const w = watch.get(), mode = app.view.mode;
+    return {
+      mode, explicitMode: w.mode, feedCount: app.prs.length, trackedCount: app.view.live.length, availableTotal: app.view.availableTotal,
+      watchedPaths: watchedFiles(app.files, w.rules),
+      rules: w.rules.map((r) => ({ ...r, files: r.type === 'path' ? app.files.filter((f) => matchPath(r.value, f.path)).length : null, matches: app.prs.filter((p) => !p.status.match(/^(merged|closed)$/) && (r.type === 'author' ? String(p.author).toLowerCase() === r.value.toLowerCase() : p.files.some((f) => matchPath(r.value, f.path)))).length })),
+      pendingPicks: w.picked.filter((x) => !app.prs.some((p) => p.id === x.key || p.id === `#${x.key}` || String(p.number) === x.key)).map((x) => x.key),
+      authors: [...new Set(app.prs.map((p) => p.author))].sort(),
+    };
+  };
+  const snapshot = () => ({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
 
   function broadcast() {
     app.version++;
@@ -117,10 +146,27 @@ export function createApp({ store = new ConfigStore(), files = [], prs = [], sam
     }
     if (p === '/api/prs' && m === 'POST') {
       const b = await readJson(req);
+      leaveSample();      // before setPRs: real data means opt-in tracking, not the demo's track-everything
       const r = setPRs(Array.isArray(b) ? b : b.prs);
-      app.sampleMode = false;
       refreshJira();
       return json(res, 200, { ok: true, ...r });
+    }
+    // Choosing what to track. Every change re-derives the tracked set, then Jira is asked about any new tickets.
+    if (p.startsWith('/api/watch/')) {
+      const b = await readJson(req);
+      let r;
+      if (p === '/api/watch/pick' && m === 'POST') r = watch.pick(b.ref);
+      else if (p === '/api/watch/unpick' && m === 'POST') r = watch.unpick(b.id);
+      else if (p === '/api/watch/rule' && m === 'POST') r = watch.addRule(b.type, b.value);
+      else if (p === '/api/watch/unrule' && m === 'POST') r = watch.removeRule(b.type, b.value);
+      else if (p === '/api/watch/dismiss' && m === 'POST') r = watch.dismiss(b.id);
+      else if (p === '/api/watch/mode' && m === 'PUT') r = watch.setMode(b.mode ?? null);
+      else return json(res, 404, { error: 'no such endpoint' });
+      if (!r.ok) return json(res, 400, r);
+      reconcile();
+      if (p === '/api/watch/pick' && r.key) r.matched = app.view.live.find((x) => x.id === r.key || x.id === `#${r.key}` || String(x.number) === r.key)?.id ?? null;
+      refreshJira();
+      return json(res, 200, r);
     }
     if (p === '/api/refresh' && m === 'POST') { await refreshJira(); return json(res, 200, { ok: true }); }
 
@@ -208,7 +254,8 @@ export function createApp({ store = new ConfigStore(), files = [], prs = [], sam
   });
 
   app.threeInstalled = !!threeDir;
-  app.setPRs = (x) => { const r = setPRs(x); app.sampleMode = false; broadcast(); return r; };
+  app.setPRs = (x) => { leaveSample(); const r = setPRs(x); broadcast(); return r; };
+  app.watch = watch;
   app.refreshJira = refreshJira;
   app.snapshot = snapshot;
   app.listen = (port, host = '127.0.0.1') => new Promise((resolve, reject) => {

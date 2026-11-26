@@ -10,7 +10,7 @@
     "start": "node bin/battlemap.js",
     "mock": "node bin/battlemap.js --mock-jira",
     "test": "node --test",
-    "e2e": "node e2e/ui.mjs"
+    "e2e": "node e2e/ui.mjs && node e2e/watch.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -37,5 +37,8 @@
     "web",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "devDependencies": {
+    "playwright": "^1.65.1"
+  }
 }

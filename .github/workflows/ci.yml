@@ -17,3 +17,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+  # Drives the real UI in Chrome (the runner's own, with software WebGL): Jira panels against the mock,
+  # then PR tracking end to end. Slower than the unit tests, so it runs once, on the newest Node.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run e2e

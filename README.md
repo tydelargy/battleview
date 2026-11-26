@@ -79,7 +79,7 @@ curl -X POST localhost:4747/api/prs -H 'X-Battlemap: 1' -H 'Content-Type: applic
   "id": "#2291", "number": 2291, "url": "https://github.com/org/repo/pull/2291",
   "title": "ENG-412 Proration engine rewrite", "branch": "maya/ENG-412-proration",
   "author": "maya", "ticket": "ENG-412",
-  "status": "review_requested | re_review | changes_requested | ci_failing | ready_to_merge | draft",
+  "status": "review_requested | re_review | changes_requested | ci_failing | ready_to_merge | draft | merged | closed",
   "files": [{ "path": "packages/core/domain/pricing.ts", "add": 420, "del": 310,
               "hunks": [{ "add": 30, "del": 2 }, { "add": 12, "del": 5 }] }]
 }]}
@@ -92,6 +92,7 @@ curl -X POST localhost:4747/api/prs -H 'X-Battlemap: 1' -H 'Content-Type: applic
 ```
 bin/battlemap.js        CLI
 server/                 config, Jira client + mock, snapshot join and insights, local repo scan
+server/watch.js         what is tracked: picks, author and path rules, ended PRs (pure matching, tested)
 web/layout.js           deterministic treemap            (pure, tested)
 web/spires.js           spire + hunk geometry plan       (pure, tested)
 web/sigil.js            flag number, author colour, epic emblem (pure, tested)
@@ -101,6 +102,25 @@ web/main.js             panels, settings, Jira actions
 
 `npm test` runs the suite (Jira client against the mock, server and security, layout and spire maths, flag sigils, a scene wiring smoke test). `npm run e2e` drives the real UI in Chrome against the mock (needs Playwright).
 
+## Choosing what to track
+
+The feed is the pool of everything open; the map only draws what you track, so a busy monorepo stays readable. Your own PRs (Settings > Display > Identity) are always tracked. Everything else is opt-in, from **+ TRACK PRS** at the end of the PR tray:
+
+* **By link.** Paste a PR URL, `#123` or a number. If the PR is not in the feed yet, it is tracked as soon as it shows up.
+* **By author.** "Track everything maya opens", from the list or a rule.
+* **By path.** "Track any PR that touches `packages/billing/`". A plain path covers that file or folder, `*` stays inside one folder, `**` crosses folders. You can also click a file on the map and choose WATCH FILE or WATCH FOLDER. This is the one for teams that own part of a repo.
+* **From the list.** Every untracked open PR, most recently updated first, with a filter by text and author.
+
+**Reminders, so rules never surprise you.** A cyan `◉ WATCHING` pill at the top lists your rules (click it to edit them). Every file a path rule covers gets a cyan rim on the map, even with no PR on it (Layers > Mark watched files turns that off). A PR that a rule tracked carries a cyan tag naming the rule, and a toast says so when a rule newly pulls PRs in.
+
+**Stop tracking** from the focus panel. A PR you stopped tracking stays off even if a rule still matches it; tracking it again by hand clears that.
+
+**Ended PRs.** When a tracked PR merges, closes or drops out of the feed, it stays in the tray as a dashed MERGED or CLOSED card until you press DISMISS. A PR that left the feed is shown as CLOSED because the feed does not say whether it merged; a feed that sends `"status": "merged"` or `"closed"` gets the exact word. Ended PRs are not drawn on the map and do not raise Alerts. Rules never pull in a PR the feed already lists as merged or closed; only PRs you picked, or that were open and tracked a moment ago, get an ended card. Because "left the feed" means "ended", send every open PR on every update.
+
+**Everything in the feed** (the toggle at the top of the dialog) turns opt-in off. That is also the default for the built-in sample, so the demo is not empty; the first real feed switches to opt-in.
+
+Your choices are saved next to the config as `config.watch.json` (mode 0600), along with which PRs were open, so one that merges while the server is down still gets its card on the next start. Nothing is written under `--mock-jira`, and the built-in sample is never remembered. Rules are evaluated on the server, so they also apply to PRs that are opened later.
+
 ## Security notes
 
 Binds to 127.0.0.1. Writes need an `X-Battlemap` header and a matching Origin, and the Host header is checked, so a web page you visit cannot drive it. There is no login: do not bind to a public address.
@@ -109,7 +129,8 @@ Binds to 127.0.0.1. Writes need an `X-Battlemap` header and a matching Origin, a
 
 ```
 npm test         # unit + server + scene wiring tests (no browser needed)
-npm run e2e      # drives the real UI against the mock Jira (needs Playwright + Chrome)
+npm run e2e      # drives the real UI in Chrome: Jira panels against the mock, then PR tracking end to end
+                 # (needs Playwright + Chrome; set TMPDIR to keep its scratch files somewhere of your choosing)
 ```
 
 `web/layout.js` (treemap) and `web/spires.js` (diff layer plan) are pure and unit tested; `web/scene.js` is the Three.js glue.
