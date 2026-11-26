@@ -269,6 +269,12 @@ function seg(options, current, onPick, label) {
 function toggle(label, on, onChange, id) {
   return h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id, checked: on, onchange: (e) => onChange(e.target.checked) }), label);
 }
+const FOCUS_HELP = {
+  lines: 'The building is the file: line 1 at the roof, the last line at the ground. Each hunk is a belt at its place in the file, as thick as the share of the file it covers (green added, red deleted). Good for where, and how much of the file.',
+  crates: 'Additions are crates delivered (a green stack on a pallet), deletions are debris hauled away (a rubble heap in a red skip). Same footprint and level height, one scale for both: count the levels. Good for added against deleted.',
+  side: 'The same two sides as green scaffolding and red-taped floors: same footprint, same level height, count the levels.',
+  facade: 'Additions climb the walls as scaffolding; deletions stack as taped floors on the roof.',
+};
 const BSTYLE_HELP = {
   plain: 'Every file is a plain block in its folder\u2019s colour.',
   colors: 'Every file gets its own shade inside its folder\u2019s colour, from a hash of its path. Same file, same colour, every time.',
@@ -288,8 +294,8 @@ function buildingsSection() {
     h('small', null, BSTYLE_HELP[b.mode]),
     b.mode === 'plain' ? null : [
       slider('b-spread', 'Hue spread', 'spread', 0, 50, 1, (v) => `${v}\u00b0`),
-      full ? h('div', { class: 'fl' }, h('span', null, 'Focused PR'), seg([['lines', 'On the file'], ['side', 'Side by side'], ['facade', 'Facade']], b.focus, (v) => set({ focus: v }, true), 'Focused PR diff style')) : null,
-      full ? h('small', null, b.focus === 'lines' ? 'The building is the file: line 1 at the roof, the last line at the ground. Each hunk is a belt at its place in the file, as thick as the share of the file it covers (green added, red deleted).' : b.focus === 'side' ? 'Additions (green scaffold) and deletions (taped floors) stand next to each other on the roof: same footprint, same level height, so count the levels.' : 'Additions climb the walls as scaffolding; deletions stack as taped floors on the roof.') : null,
+      full ? h('div', { class: 'fl' }, h('span', null, 'Focused PR'), seg([['lines', 'File'], ['crates', 'Crates'], ['side', 'Frames'], ['facade', 'Facade']], b.focus, (v) => set({ focus: v }, true), 'Focused PR diff style')) : null,
+      full ? h('small', null, FOCUS_HELP[b.focus]) : null,
       full ? slider('b-dens', 'Window density', 'density', 0.6, 2, 0.1, (v) => `${v.toFixed(1)}x`) : null,
       full ? slider('b-var', 'Shape variety', 'variety', 1, 7, 1, (v) => String(v)) : null,
       full ? slider('b-height', 'Height boost', 'height', 1, 3, 0.1, (v) => `${v.toFixed(1)}x`) : null,
@@ -345,8 +351,9 @@ function openKey() {
       h('h3', null, 'CONSTRUCTION SITES (Layers > Buildings > Buildings)'),
       h('ul', null,
         h('li', null, h('b', null, 'Crane'), ' on a roof = a PR is adding code to this file. Its colour is the PR\u2019s status, so it matches the flag. The whole crane is scaled by lines added on the same scale as the toppers, whatever the file or roof, so the same lines are the same crane anywhere. The flat pad under it is the share of the file changed. Two PRs on one roof, two cranes.'),
-        h('li', null, h('b', null, 'Scaffolding'), ' (green, with a ring in the PR colour at the top) = you focused a PR and this is what it adds. By default it is a tower on the left of the roof, next to the taped floors for the deletions: same footprint, same baseline, same level height, so count the levels to compare added with deleted. Layers > Focused PR > Facade puts it up the walls instead, as high as lines added (never past the fully walled part).'),
-        h('li', null, h('b', null, 'Belts on the building'), ' (Layers > Focused PR > On the file, the default in this spike) = the building is the file, line 1 at the roof and the last line at the ground. Every hunk is a belt at its place in the file, green for lines added with the red for lines deleted under it, as thick as the share of the file it covers. A ruler up one corner marks every quarter. Hunks without line numbers are spread evenly in file order.'),
+        h('li', null, h('b', null, 'Scaffolding'), ' (green, with a ring in the PR colour at the top) = a focused PR\u2019s additions in the Frames and Facade styles. Frames is a tower on the left of the roof, next to the taped floors for the deletions: same footprint, same baseline, same level height, so count the levels. Facade puts it up the walls instead, as high as lines added (never past the fully walled part).'),
+        h('li', null, h('b', null, 'Belts on the building'), ' (Layers > Focused PR > File) = the building is the file, line 1 at the roof and the last line at the ground. Every hunk is a belt at its place in the file, green for lines added with the red for lines deleted under it, as thick as the share of the file it covers. A ruler up one corner marks every quarter. Hunks without line numbers are spread evenly in file order.'),
+        h('li', null, h('b', null, 'Crates and a skip'), ' (Layers > Focused PR > Crates, the default) = the focused PR\u2019s change as a yard: additions are a solid stack of green crates on a pallet, deletions are a rubble heap in a red skip beside it. Same footprint and level height, as many levels as the lines need on the one scale, so count the levels.'),
         h('li', null, h('b', null, 'Red-taped floor'), ' = lines were deleted. An emptied floor with red tape in an X on every face. The stack is as tall as lines deleted on that same scale (one floor is 2.4 of it, up to 24 floors); focused, it is one tower on the right of the roof, the same size as the additions tower.'),
         h('li', null, 'The Plain and Colours styles keep the plain toppers described above.')),
       h('h3', null, 'FOCUSED PR'),

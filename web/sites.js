@@ -98,6 +98,7 @@ export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = '
   const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
   if (col.focused && focusStyle === 'side') return sideBySide(col, slot, heightOf);
   if (col.focused && focusStyle === 'lines' && shell) return lineBands(col, shell);
+  if (col.focused && focusStyle === 'crates') return crates(col, slot, heightOf);
   const delHunks = col.parts.filter((p) => p.kind === 'del').map((p) => p.n);
   const counts = col.focused && delHunks.length ? delHunks.map((n) => floorsFor(n, heightOf)) : [floorsFor(col.del, heightOf)];
   let z = col.z0, used = 0;
@@ -119,11 +120,13 @@ export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = '
  * is two stacks you can count. The sides are fixed (adds left, deletes right, along the longer side of the slot), and
  * a side with nothing in it is just its flat pad, so an absence is visible too.
  */
-function sideBySide(col, slot, heightOf) {
+function halves(slot) {
   const longX = slot.w >= slot.d, gap = Math.min(0.5, (longX ? slot.w : slot.d) * 0.08), half = ((longX ? slot.w : slot.d) - gap) / 2;
-  const sides = longX ? [{ ...slot, x: slot.x - (half + gap) / 2, w: half }, { ...slot, x: slot.x + (half + gap) / 2, w: half }]
+  return longX ? [{ ...slot, x: slot.x - (half + gap) / 2, w: half }, { ...slot, x: slot.x + (half + gap) / 2, w: half }]
     : [{ ...slot, y: slot.y - (half + gap) / 2, d: half }, { ...slot, y: slot.y + (half + gap) / 2, d: half }];
-  const [a, b] = sides, parts = [], na = col.add > 0 ? floorsFor(col.add, heightOf) : 0, nd = col.del > 0 ? floorsFor(col.del, heightOf) : 0;
+}
+function sideBySide(col, slot, heightOf) {
+  const [a, b] = halves(slot), parts = [], na = col.add > 0 ? floorsFor(col.add, heightOf) : 0, nd = col.del > 0 ? floorsFor(col.del, heightOf) : 0;
   parts.push({ x: a.x, y: a.y, w: a.w, d: a.d, z: col.z0, h: 0.2, tone: 'addPad' }, { x: b.x, y: b.y, w: b.w, d: b.d, z: col.z0, h: 0.2, tone: 'delPad' });
   if (na) parts.push(...scaffoldParts({ x: a.x - a.w / 2, y: a.y - a.d / 2, w: a.w, h: a.d }, na * FLOOR_H, { pad: 0, lift: FLOOR_H, z0: col.z0, ground: false, t: clamp(Math.min(a.w, a.d) * 0.06, 0.2, 0.5), braces: na, maxPoles: 12 }));
   for (let i = 0; i < nd; i++) parts.push(...tapeFloor(b, col.z0 + i * FLOOR_H, FLOOR_H));
@@ -164,4 +167,40 @@ export function lineBands(col, shell) {
   parts.push({ ...ruler, w: 0.18, d: 0.18, z: 0, h: H, tone: 'metal', ground: true });
   for (let k = 0; k <= 4; k++) parts.push({ x: ruler.x, y: ruler.y, w: 0.9, d: 0.9, z: Math.min(H - 0.1, (H * k) / 4), h: 0.1, tone: 'metal', ground: true });
   return { parts, top: col.z0 };
+}
+
+// A small deterministic jitter in [0, 1) for rubble, so a pile looks the same every time and the module stays pure.
+const jitter = (a, b, c) => { let h = (Math.imul(a + 1, 73856093) ^ Math.imul(b + 1, 19349663) ^ Math.imul(c + 1, 83492791)) >>> 0; h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0; return (h ^ (h >>> 13)) % 1000 / 1000; };
+
+/**
+ * The side-by-side view as a building site's yard instead of empty frames. Same layout and the same sizing rule
+ * (a level is FLOOR_H, and each side is as many levels as its lines need on the one diff scale): additions are
+ * crates delivered, a solid stack on a pallet on the left; deletions are debris hauled away, a rubble heap in a
+ * red skip on the right, as tall as the stack beside it. Stacks are solid, so the volumes read, not just the lines.
+ */
+function crates(col, slot, heightOf) {
+  const [a, b] = halves(slot), parts = [], na = col.add > 0 ? floorsFor(col.add, heightOf) : 0, nd = col.del > 0 ? floorsFor(col.del, heightOf) : 0;
+  const base = col.z0 + 0.3, cells = (r) => [clamp(Math.round(r.w / FLOOR_H), 1, 4), clamp(Math.round(r.d / FLOOR_H), 1, 4)];
+  parts.push({ x: a.x, y: a.y, w: a.w, d: a.d, z: col.z0, h: 0.2, tone: 'addPad' }, { x: b.x, y: b.y, w: b.w, d: b.d, z: col.z0, h: 0.2, tone: 'delPad' });
+  if (na) {
+    parts.push({ x: a.x, y: a.y, w: a.w, d: a.d, z: col.z0, h: 0.3, tone: 'pallet' });
+    const [nx, ny] = cells(a), cw = a.w / nx, cd = a.d / ny;
+    for (let k = 0; k < na; k++) for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++)
+      parts.push({ x: a.x - a.w / 2 + cw * (i + 0.5), y: a.y - a.d / 2 + cd * (j + 0.5), w: cw * 0.94, d: cd * 0.94, z: base + k * FLOOR_H, h: FLOOR_H * 0.94, tone: (i + j + k) % 2 ? 'crateDark' : 'add' });
+  }
+  if (nd) {
+    const wall = Math.min(1.3, nd * FLOOR_H * 0.5), t = clamp(Math.min(b.w, b.d) * 0.05, 0.2, 0.45);
+    parts.push({ x: b.x, y: b.y, w: b.w, d: b.d, z: col.z0, h: 0.3, tone: 'skip' });
+    parts.push({ x: b.x, y: b.y - b.d / 2 + t / 2, w: b.w, d: t, z: base, h: wall, tone: 'skip' }, { x: b.x, y: b.y + b.d / 2 - t / 2, w: b.w, d: t, z: base, h: wall, tone: 'skip' },
+      { x: b.x - b.w / 2 + t / 2, y: b.y, w: t, d: b.d, z: base, h: wall, tone: 'skip' }, { x: b.x + b.w / 2 - t / 2, y: b.y, w: t, d: b.d, z: base, h: wall, tone: 'skip' });
+    const [nx, ny] = cells(b), iw = b.w - 2 * t, id = b.d - 2 * t;
+    for (let k = 0; k < nd; k++) {                         // a heap: every level a little narrower than the one under it
+      const f = 1 - 0.45 * (k / Math.max(1, nd)), w = iw * f, d = id * f, cw = w / nx, cd = d / ny;
+      for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+        const r = jitter(i, j, k), hgt = FLOOR_H * (0.78 + 0.2 * jitter(j, k, i));
+        parts.push({ x: b.x - w / 2 + cw * (i + 0.5) + (r - 0.5) * cw * 0.1, y: b.y - d / 2 + cd * (j + 0.5), w: cw * (0.8 + 0.18 * r), d: cd * (0.8 + 0.18 * jitter(k, i, j)), z: base + k * FLOOR_H, h: hgt, tone: r > 0.55 ? 'rubble2' : 'rubble' });
+      }
+    }
+  }
+  return { parts, top: col.z0 + Math.max(na, nd, 1) * FLOOR_H + 0.3 };
 }

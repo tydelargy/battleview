@@ -346,6 +346,11 @@ export function createScene(host, handlers = {}) {
       case 'statusDark': return _c.copy(st).offsetHSL(0, 0, -0.16);
       case 'metal': return _c.set(0x9aa5b1);
       case 'add': return _c.set(DIFF_COLORS.add);
+      case 'crateDark': return _c.set(DIFF_COLORS.add).offsetHSL(0, -0.05, -0.14);
+      case 'pallet': return _c.set(0x8a6a45);
+      case 'skip': return _c.set(0xb8323f);
+      case 'rubble': return _c.set(0x8b8f98);
+      case 'rubble2': return _c.set(0x7a4a50);
       case 'addPad': return _c.set(DIFF_COLORS.add).offsetHSL(0, -0.1, -0.2);
       case 'delPad': return _c.set(DIFF_COLORS.del).offsetHSL(0, -0.1, -0.2);
       case 'pad': return _c.copy(st).offsetHSL(0, -0.15, -0.22);
@@ -365,7 +370,7 @@ export function createScene(host, handlers = {}) {
       const st = new THREE.Color(statusColor(c.status)), bp = c.dimmed ? gBoxes : boxes;
       const base = { prId: c.prId, path: c.path, lines: c.lines, pct: c.pct, add: c.add, del: c.del };
       for (const q of parts) {
-        const ground = q.ground ? 0 : c.z0, kind = q.tone === 'add' || q.ground ? 'add' : q.tone === 'tape' || q.tone === 'post' || q.tone === 'floor' ? 'del' : 'pr';
+        const ground = q.ground ? 0 : c.z0, kind = q.tone === 'add' || q.tone === 'crateDark' || q.ground ? 'add' : ['tape', 'post', 'floor', 'skip', 'rubble', 'rubble2'].includes(q.tone) ? 'del' : 'pr';
         const meta = { ...base, kind, n: kind === 'add' ? c.add : kind === 'del' ? c.del : undefined };
         const col = siteColor(q.tone, st);
         if (q.diag) {                                // a diagonal of tape: a thin box turned in the plane of its wall
