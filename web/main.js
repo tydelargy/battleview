@@ -1,4 +1,5 @@
-import { api } from './api.js';
+import { api, base, url } from './api.js';
+import { startWorld } from './worldui.js';
 import { SCALES, TOPPERS, scaleTicks, DIFF_COLORS, MIN_COVER } from './spires.js';
 import { authorColor, epicEmblem, flagLabel, EMBLEMS } from './sigil.js';
 import { STYLE_MODES, normaliseStyle, focusView } from './building.js';
@@ -113,7 +114,7 @@ function applyScene() {
   sc.setPRs(s.prs, { mode: state.scale, topper: state.topper, focusId: selPR && !selPR.ended ? state.sel : null, ageLift: state.ageLift, visible: new Set(live.map((p) => p.id)), fog: state.fog, statusColors, view: state.view });
 }
 function connectEvents() {
-  const es = new EventSource('/api/events');
+  const es = new EventSource(url('/api/events')); state.es = es;
   es.addEventListener('snapshot', () => { clearTimeout(pending); pending = setTimeout(() => refresh().catch(() => { /* server restarting: the reconnect sends a fresh snapshot event */ }), 120); });
   es.onerror = () => { /* the browser retries by itself */ };
 }
@@ -124,7 +125,7 @@ function renderAll() { renderHeader(); renderChips(); renderCards(); renderFocus
 function renderHeader() {
   const s = state.snap;
   const w = s.watch, open = s.prs.filter((p) => !p.ended).length;
-  $('sub').textContent = `${s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${w.mode === 'all' ? `${open} PRs` : `${open} tracked of ${w.feedCount} PRs`}${anyFilter(state.filters) ? ` · showing ${visiblePRs().filter((p) => !p.ended).length}` : ''}${s.mock ? ' · MOCK JIRA' : ''}`;
+  $('sub').textContent = `${s.city ? s.city.key + (s.city.estimated ? ' · sizes estimated' : '') + ' · ' : s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${w.mode === 'all' ? `${open} PRs` : `${open} tracked of ${w.feedCount} PRs`}${anyFilter(state.filters) ? ` · showing ${visiblePRs().filter((p) => !p.ended).length}` : ''}${s.mock ? ' · MOCK JIRA' : ''}`;
   const n = s.prs.filter((p) => p.needs).length, red = s.prs.filter((p) => p.status === 'ci_failing').length, rdy = s.prs.filter((p) => p.status === 'ready_to_merge').length;
   $('counters').replaceChildren(...[['NEEDS YOU', n, 'var(--accent)'], ['CI RED', red, 'var(--del)'], ['READY', rdy, 'var(--add)']].map(([l, v, c]) => h('div', { class: 'ctr' }, h('b', { style: `color:${c}` }, v), h('span', null, l))));
   const j = s.jira, dot = $('jiraDot'), txt = $('jiraTxt');
@@ -720,6 +721,33 @@ addEventListener('keydown', (e) => {
 });
 window.battlemap = { state, selectPR, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
 
-await startScene();
-await refresh();
-connectEvents();
+/* ---------- boot: one map, or (served by the hub) a world of cities you can go into ---------- */
+async function enterCity() { await startScene(); await refresh(); connectEvents(); }
+function leaveCity() {
+  state.es?.close(); state.es = null; clearTimeout(pending);
+  state.scene?.dispose(); state.scene = null; state.snap = null; state.sel = null; state.known = null; state.knownNotifs = null; state.notifBaseline = null; state.transitions = null; state.nprOpen = false;
+  for (const id of ['focus', 'alerts', 'notifs', 'filters', 'layers', 'filebar', 'tip', 'nogl']) { const e = $(id); if (e) e.hidden = true; }
+  $('cards').replaceChildren(); $('chips').replaceChildren(); $('counters').replaceChildren();
+}
+const hubMode = await fetch('/api/hub/world').then((r) => r.json()).then((j) => Array.isArray(j.cities)).catch(() => false);
+if (!hubMode) { await enterCity(); }
+else {
+  document.body.classList.add('hub');
+  let world = null;
+  const route = async () => {
+    const m = location.hash.match(/^#\/r\/([a-z0-9_.-]+(?:--[a-z0-9_.-]+){1,2})$/);
+    if (m) {
+      world?.dispose(); world = null; base.prefix = `/r/${m[1]}`; document.body.classList.add('in-city'); $('world').hidden = true; $('worldBtn').hidden = false;
+      await enterCity();
+    } else {
+      if (state.snap || state.scene) leaveCity();
+      base.prefix = ''; document.body.classList.remove('in-city'); $('worldBtn').hidden = true; $('world').hidden = false;
+      if (!world) world = startWorld({ host: $('world'), onEnter: (id) => { location.hash = `#/r/${id}`; }, toast });
+      else world.refresh();
+      window.battlemap.world = world;
+    }
+  };
+  $('worldBtn').onclick = () => { location.hash = '#/'; };
+  addEventListener('hashchange', route);
+  await route();
+}

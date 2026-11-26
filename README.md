@@ -164,6 +164,23 @@ Notifications are worked out on the server by comparing each tracked PR with how
 
 Notifications, your defaults and per-PR overrides, and silenced alerts are saved next to the config as `config.notify.json` (mode 0600), except under `--mock-jira`. Desktop (system) notifications are not part of this; it is in-app only.
 
+## All your repos on one map
+
+`battlemap --hub` is the way to watch more than one repo. The first page is the **world**: every repo is a small city on its own hex of land, the cities sit side by side, and nothing connects them. A city's hill gets a biome (meadow, forest, desert, tundra, volcanic, savanna, marsh, alpine) from a hash of its `org/name`, so a repo always grows the same plot.
+
+![The world: four cities on their hills, the hovered one showing its numbers](docs/screenshots/world.png)
+
+* **Hover a city** for three numbers: how many PRs you are *tracking* there, how many *you* have open, and how many *need action*. Hover shows the numbers only; **click a city** to go in (the full map you know, for that repo), and the **ALL REPOS** button brings you back. The numbers come from one light `gh pr list` per repo; a city's PRs are only read in full, and kept fresh, while you are in it.
+* **Drag a city** onto another free hex to move it. The map keeps itself together: a city can only move to an empty hex that touches another city, and never in a way that splits the group in two. Layout is saved.
+* **Hover a glowing free hex** (the faint ones beside the group) and press **+** to add a repo by URL (`https://github.com/org/repo`, `org/repo`, or an Enterprise URL). **Nothing is ever cloned.** The city is built from what GitHub says about the default branch (`gh api`: the file tree), so file sizes are estimates (about 38 bytes to a line) and the map says so. Jira is shared by every city, and each city has its own tracking rules, picks and notifications.
+* **Forget** (in the widget, asks twice) removes a city and its saved state.
+
+```
+battlemap --hub                      # data in ~/.local/share/battlemap  (--data DIR to change it)
+```
+
+`--repo`, `--prs` and the sample map still work as before for a single repo.
+
 ## Running it for real
 
 Everything above works from a file you feed it. To keep a map of a real repo live, with a cron job or systemd timer doing the feeding, you need three things: the code, a feed, and something to keep both fresh.
