@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildLayout, WORLD } from './layout.js';
 import { planSpires, DIFF_COLORS, diffHeight } from './spires.js';
 import { ageDays, ageLift } from './filters.js';
-import { buildingFor, DEFAULT_STYLE, SHAPES } from './building.js';
+import { buildingFor, DEFAULT_STYLE, SHAPES, focusView } from './building.js';
 import { siteParts } from './sites.js';
 
 const CX = WORLD.w / 2, CY = WORLD.h / 2;
@@ -229,7 +229,7 @@ export function createScene(host, handlers = {}) {
   const S = {
     layout: null, filesKey: '', prs: [], opts: { mode: 'sqrt', topper: 'share', focusId: null, visible: null, fog: true, statusColors: {}, view: '3d' },
     ui: { labels: true, flags: true, lines: 'selected', watched: true }, watched: new Set(),
-    style: { ...DEFAULT_STYLE }, styled: new Map(), occupied: new Set(),
+    style: { ...DEFAULT_STYLE }, styled: new Map(), occupied: new Set(), sites: [],
     columns: [], growth: { t0: 0, dur: 520, active: false, p: 1 }, flags: new Map(), hover: null, highlight: new Set(), touched: new Set(), contested: new Set(), tween: null, size: { w: 1, h: 1 }, focusLabels: [],
   };
 
@@ -334,11 +334,17 @@ export function createScene(host, handlers = {}) {
   // ---- construction sites (the Buildings style): cranes, scaffolding and red-taped floors instead of plain toppers ----
   // Planned once per set of columns (the shapes are pure, see web/sites.js), then drawn every frame while they grow.
   function planSites() {
-    S.sites = null;
+    S.sites = [];
     for (const c of S.columns) c.siteTop = undefined;
-    if (S.style.mode !== 'full') return;
-    // sized on the same diff scale as the toppers (spires.js), so heights compare across the whole map
-    S.sites = S.columns.map((c) => { const r = siteParts(c, S.styled.get(c.path)?.shell, { heightOf: (n) => diffHeight(n, S.opts.mode), focusStyle: S.style.focus }); c.siteTop = r.top - c.z0; return { c, parts: r.parts }; });
+    // Buildings: every column is a site (a crane until focused). The simple styles keep their toppers, but a focused PR
+    // is drawn in the chosen focus view too, so File belts, Crates and the rest work on plain blocks as well.
+    // 'hunks' is the classic stack of green and red hunks, drawn by the topper code below.
+    const full = S.style.mode === 'full', view = focusView(S.style);
+    for (const c of S.columns) {
+      if (full ? c.focused && view === 'hunks' : !(c.focused && view !== 'hunks')) continue;
+      // sized on the same diff scale as the toppers (spires.js), so heights compare across the whole map
+      const r = siteParts(c, S.styled.get(c.path)?.shell, { heightOf: (n) => diffHeight(n, S.opts.mode), focusStyle: view }); c.siteTop = r.top - c.z0; S.sites.push({ c, parts: r.parts });
+    }
   }
   const siteColor = (tone, st) => {
     switch (tone) {
@@ -360,13 +366,8 @@ export function createScene(host, handlers = {}) {
     }
   };
   const _qa = new THREE.Quaternion(), AX = new THREE.Vector3(1, 0, 0), AZ = new THREE.Vector3(0, 0, 1);
-  function drawSites(p) {
-    const sites = S.sites;
-    let n = 0; for (const s of sites) n += s.parts.length;
-    const solid = sites.filter((s) => !s.c.dimmed), glass = sites.filter((s) => s.c.dimmed);
-    const count = (list) => list.reduce((a, s) => a + s.parts.length, 0);
-    boxes.begin(count(solid)); gBoxes.begin(count(glass)); caps.begin(0); gCaps.begin(0);
-    for (const { c, parts } of sites) {
+  function pushSites(p) {                           // the pools are begun by drawSpires, which also draws the toppers
+    for (const { c, parts } of S.sites) {
       const st = new THREE.Color(statusColor(c.status)), bp = c.dimmed ? gBoxes : boxes;
       const base = { prId: c.prId, path: c.path, lines: c.lines, pct: c.pct, add: c.add, del: c.del };
       for (const q of parts) {
@@ -380,7 +381,6 @@ export function createScene(host, handlers = {}) {
         } else bp.push(_p.set(q.x - CX, ground + (q.z - ground) * p, q.y - CY), _s.set(q.w, Math.max(0.02, q.h * p), q.d), col, meta);
       }
     }
-    return n;
   }
   // Amber frame around any roof that two or more PRs share. Static on purpose.
   function drawRims() {
@@ -397,17 +397,13 @@ export function createScene(host, handlers = {}) {
   function drawSpires(progress) {
     const p = ease(Math.min(1, Math.max(0, progress)));
     S.growth.p = p;
-    if (S.sites) {
-      drawSites(p);
-      [boxes, caps, gBoxes, gCaps].forEach((x) => x.end());
-      drawRims();
-      S.focusLabels = S.columns.filter((c) => c.focused).slice(0, diffLabels.length).map((c) => ({ c, top: c.z0 + (colTotal(c) + capHeight(c)) * p + 1.5 }));
-      return;
-    }
-    const solidCols = S.columns.filter((c) => !c.dimmed), glassCols = S.columns.filter((c) => c.dimmed);
-    boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0)); caps.begin(solidCols.length);
-    gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0)); gCaps.begin(glassCols.length);
-    for (const c of S.columns) {
+    const sites = new Set(S.sites.map((s) => s.c)), loose = S.columns.filter((c) => !sites.has(c));   // columns drawn as toppers
+    const solidCols = loose.filter((c) => !c.dimmed), glassCols = loose.filter((c) => c.dimmed);
+    const count = (list) => list.reduce((a, s) => a + s.parts.length, 0), siteSolid = S.sites.filter((s) => !s.c.dimmed), siteGlass = S.sites.filter((s) => s.c.dimmed);
+    boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0) + count(siteSolid)); caps.begin(solidCols.length);
+    gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0) + count(siteGlass)); gCaps.begin(glassCols.length);
+    pushSites(p);
+    for (const c of loose) {
       const st = new THREE.Color(statusColor(c.status));
       const bp = c.dimmed ? gBoxes : boxes, cp = c.dimmed ? gCaps : caps;
       const meta = { prId: c.prId, path: c.path, lines: c.lines, pct: c.pct, add: c.add, del: c.del };
@@ -642,7 +638,7 @@ export function createScene(host, handlers = {}) {
     setUI(u) { const was = S.ui.watched; S.ui = { ...S.ui, ...u }; if (S.ui.watched !== was) drawWatch(); },
     setWatched(paths) { S.watched = new Set(paths || []); drawWatch(); },
     setHighlight(paths) { S.highlight = new Set(paths || []); refreshBuildings(); },
-    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov }),
+    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov, sites: S.sites.length }),
     layout: () => S.layout,
     /** Hash identity of one file: its index code, silhouette and window style. */
     buildingInfo(path) { const b = S.styled.get(path); return b ? { code: b.t.code, shape: S.style.mode === 'full' ? SHAPES[b.t.shape] : 'block', parts: b.parts.length } : null; },

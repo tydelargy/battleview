@@ -49,14 +49,15 @@ test('a taped floor is an open frame: slab, four posts, a rail and an X on every
   const diags = parts.filter((p) => p.diag);
   assert.equal(diags.length, 8, 'two diagonals on each of four faces');
   assert.equal(diags.filter((p) => p.angle > 0).length, 4); assert.equal(diags.filter((p) => p.angle < 0).length, 4, 'they cross');
-  for (const p of parts.filter((q) => !q.diag)) assert.ok(inside(p, slot) && p.z >= 30 - 1e-9 && p.z + p.h <= 33 + 1e-9);
+  for (const p of parts.filter((q) => !q.diag)) assert.ok(inside(p, slot, 0.2) && p.z >= 30 - 1e-9 && p.z + p.h <= 33 + 1e-9);
   for (const p of diags) assert.ok(p.z > 30 && p.z < 33 && p.len > 0 && (p.along === 'x' || p.along === 'y'));
 });
 
 test('scaffolding wraps the footprint from the ground to the top, with the top ring in the PR colour', () => {
   const parts = scaffoldParts({ x: 10, y: 10, w: 30, h: 20 }, 16);
   assert.ok(parts.filter((p) => !p.diag).every((p) => p.x - p.w / 2 >= 10 - 1 && p.x + p.w / 2 <= 41 && p.y - p.d / 2 >= 10 - 1 && p.y + p.d / 2 <= 31), 'outside the wall by a margin, not wandering');
-  assert.ok(parts.filter((p) => p.tone === 'add' && p.z === 0 && p.h === 16).length >= 8, 'poles go all the way up');
+  assert.ok(parts.filter((p) => p.tone === 'add' && p.z === 0 && p.h > 16 * 0.9 && p.h < 16).length >= 8, 'poles go nearly all the way up, stopping inside the top ring');
+  assert.ok(parts.some((p) => p.tone === 'status' && Math.abs(p.z + p.h - 16) < 1e-9), 'and the top ring ends exactly at the top');
   assert.ok(parts.some((p) => p.tone === 'status') && Math.max(...parts.filter((p) => !p.diag).map((p) => p.z + p.h)) <= 16 + 1e-6)
   assert.ok(parts.filter((p) => p.diag).every((p) => p.z > 0 && p.z < 16 && p.tone === 'add'), 'braces sit between the ground and the top');
   assert.ok(scaffoldParts({ x: 0, y: 0, w: 900, h: 900 }, 60).length < 250, 'bounded however big the building');
@@ -88,12 +89,12 @@ test('focused, facade style: scaffolding as tall as the additions, floors for th
   assert.ok(s.parts.some((p) => p.tone === 'add') && !s.parts.some((p) => p.tone === 'statusDark'), 'scaffolding, no crane');
   assert.equal(floors(s.parts), 1 + Math.round(height(150) / FLOOR_H), 'a 4-line hunk is one floor, a 150-line hunk several');
   const tops = s.parts.filter((p) => p.tone === 'floor').map((p) => p.z); assert.ok(tops[0] === 12 && tops.every((z, i) => !i || z > tops[i - 1]), 'stacked on the roof');
-  const scaf = s.parts.filter((p) => p.tone === 'add' && !p.diag), tall = Math.max(...scaf.map((p) => p.z + p.h));
+  const scaf = s.parts.filter((p) => (p.tone === 'add' || p.tone === 'status') && !p.diag), tall = Math.max(...scaf.map((p) => p.z + p.h));
   assert.ok(Math.abs(tall - Math.min(SHELL.h, height(40))) < 1e-6, 'as tall as 40 added lines, up to the walled part');
   const huge = siteParts(column({ focused: true, add: 5000, del: 0, parts: [{ dz: 0, h: 5, kind: 'add', n: 5000 }] }), SHELL, { heightOf: height, focusStyle: 'facade' });
-  assert.ok(Math.max(...huge.parts.filter((p) => p.tone === 'add' && !p.diag).map((p) => p.z + p.h)) <= SHELL.h + 1e-6, 'never past the walled part');
+  assert.ok(Math.max(...huge.parts.filter((p) => (p.tone === 'add' || p.tone === 'status') && !p.diag).map((p) => p.z + p.h)) <= SHELL.h + 1e-6, 'never past the walled part');
   const small = siteParts(column({ focused: true, add: 2, del: 0, parts: [{ dz: 0, h: 1, kind: 'add', n: 2 }] }), SHELL, { heightOf: height, focusStyle: 'facade' });
-  assert.ok(Math.max(...small.parts.filter((p) => p.tone === 'add' && !p.diag).map((p) => p.z + p.h)) >= 2 - 1e-6, 'a tiny change still gets a visible scaffold');
+  assert.ok(Math.max(...small.parts.filter((p) => (p.tone === 'add' || p.tone === 'status') && !p.diag).map((p) => p.z + p.h)) >= 2 - 1e-6, 'a tiny change still gets a visible scaffold');
 });
 
 test('focused, side by side: additions left and deletions right, same footprint, same baseline, same level height', () => {
@@ -101,14 +102,14 @@ test('focused, side by side: additions left and deletions right, same footprint,
   const { parts, top: t } = siteParts(col, SHELL, { heightOf: height, focusStyle: 'side' });
   const levels = (n) => Math.round(height(n) / FLOOR_H);
   assert.equal(floors(parts), levels(310), 'the deleted side is as many floors as its lines need');
-  const scaf = parts.filter((p) => p.tone === 'add' && !p.diag), poles = scaf.filter((p) => p.h > FLOOR_H * 2);
-  assert.ok(Math.abs(Math.max(...scaf.map((p) => p.z + p.h)) - (12 + levels(420) * FLOOR_H)) < 1e-6, 'the added side is as many levels as its lines need');
-  assert.ok(poles.every((p) => p.z === 12), 'both sides start on the roof');
+  const scaf = parts.filter((p) => (p.tone === 'add' || p.tone === 'status') && !p.diag), poles = parts.filter((p) => p.tone === 'add' && !p.diag && p.h > FLOOR_H * 2);
+  assert.ok(Math.abs(Math.max(...scaf.map((p) => p.z + p.h)) - (12.2 + levels(420) * FLOOR_H)) < 1e-6, 'the added side is as many levels as its lines need');
+  assert.ok(poles.every((p) => Math.abs(p.z - 12.2) < 1e-9), 'both sides start on their pad, on the roof');
   const pads = { add: parts.find((p) => p.tone === 'addPad'), del: parts.find((p) => p.tone === 'delPad') };
   assert.deepEqual([pads.add.w, pads.add.d], [pads.del.w, pads.del.d], 'equal footprints');
   assert.ok(pads.add.x < pads.del.x && pads.add.y === pads.del.y, 'adds left, deletes right, along the longer side');
   assert.ok(Math.abs(pads.add.w + pads.del.w + (pads.del.x - pads.add.x - pads.add.w)) <= 12 + 1e-6, 'together they fit the slot');
-  assert.ok(Math.abs(t - (12 + Math.max(levels(420), levels(310)) * FLOOR_H)) < 1e-9);
+  assert.ok(Math.abs(t - (12.2 + Math.max(levels(420), levels(310)) * FLOOR_H)) < 1e-9);
   for (const p of parts.filter((q) => !q.diag && q.tone !== 'add')) assert.ok(p.x - p.w / 2 >= col.x - 6.5 && p.x + p.w / 2 <= col.x + 6.5, 'inside the slot (give or take the thickness of a rail)');
   assert.ok(!parts.some((p) => p.tone === 'statusDark'), 'no crane while focused');
 });
@@ -134,7 +135,7 @@ test('lines on the file: belts at the hunk\'s place, as thick as its share of th
   assert.ok(Math.abs(green[0].z + green[0].h - 20) < 1e-9, 'a hunk at line 1 touches the roof');
   assert.ok(Math.abs(red[0].z + red[0].h - 10) < 1e-9, 'a hunk starting halfway sits halfway down');
   assert.ok(parts.every((p) => p.z >= -1e-9 && p.z + p.h <= 20 + 1e-9 && p.ground), 'on the walls, never above the roof');
-  assert.ok(parts.some((p) => p.tone === 'metal' && p.h === 20), 'a ruler the height of the file');
+  assert.ok(parts.some((p) => p.tone === 'metal' && p.h > 19 && p.z === 0), 'a ruler the height of the file');
   const spread = bands({ loc: 100, add: 30, del: 0, hunks: [{ add: 10, del: 0 }, { add: 10, del: 0 }, { add: 10, del: 0 }] }).filter((p) => p.tone === 'add').filter((_, i) => i % 4 === 0).map((p) => p.z);
   assert.ok(spread[0] > spread[1] && spread[1] > spread[2], 'hunks without a start are spread down the file in order');
   const bare = bands({ loc: 50, add: 5, del: 5, hunks: null }); assert.ok(bare.some((p) => p.tone === 'add') && bare.some((p) => p.tone === 'tape'), 'no hunks at all: one belt for the totals');
@@ -146,10 +147,10 @@ test('crates and rubble: the same layout and levels as side by side, as solid st
   const col = column({ focused: true, add: 420, del: 310, w: 12, d: 6, parts: [] }), lv = (n) => Math.round(height(n) / FLOOR_H);
   const { parts, top: t } = siteParts(col, SHELL, { heightOf: height, focusStyle: 'crates' });
   const crates = parts.filter((p) => p.tone === 'add' || p.tone === 'crateDark'), rubble = parts.filter((p) => p.tone === 'rubble' || p.tone === 'rubble2');
-  const levelsOf = (list) => new Set(list.map((p) => Math.round((p.z - 12.3) / FLOOR_H))).size;
+  const levelsOf = (list) => new Set(list.map((p) => Math.round((p.z - 12.5) / FLOOR_H))).size;
   assert.equal(levelsOf(crates), lv(420), 'one layer of crates per level'); assert.equal(levelsOf(rubble), lv(310), 'one layer of rubble per level');
   assert.ok(parts.some((p) => p.tone === 'pallet') && parts.some((p) => p.tone === 'skip') && parts.some((p) => p.tone === 'addPad'));
-  assert.ok(Math.max(...crates.map((p) => p.z + p.h)) <= 12.3 + lv(420) * FLOOR_H + 1e-6 && Math.max(...rubble.map((p) => p.z + p.h)) <= 12.3 + lv(310) * FLOOR_H + 1e-6, 'no taller than the levels say');
+  assert.ok(Math.max(...crates.map((p) => p.z + p.h)) <= 12.5 + lv(420) * FLOOR_H + 1e-6 && Math.max(...rubble.map((p) => p.z + p.h)) <= 12.5 + lv(310) * FLOOR_H + 1e-6, 'no taller than the levels say');
   const pad = (tone) => parts.find((p) => p.tone === tone); assert.ok(pad('addPad').x < pad('delPad').x, 'adds left, deletes right');
   for (const p of parts) assert.ok(p.x - p.w / 2 >= col.x - 6.01 && p.x + p.w / 2 <= col.x + 6.01 && p.y - p.d / 2 >= col.y - 3.01 && p.y + p.d / 2 <= col.y + 3.01, 'inside the slot');
   assert.ok(parts.length < 500 && t > 12);
@@ -166,4 +167,30 @@ test('every column in the sample turns into a bounded number of boxes', () => {
     assert.ok(parts.length > 0 && parts.length < 220, `${parts.length} boxes`);
     assert.ok(parts.every((p) => Number.isFinite(p.x + p.y + p.z) && (p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0)) && t >= col.z0);
   }
+});
+
+// ---- layering: no two surfaces in one plane (CLAUDE.md, "Layering") ----
+import { coplanarOverlaps } from './coplanar.js';
+import { silhouette, roofGear } from '../web/building.js';
+const show = (bad) => bad.slice(0, 3).map((x) => `${x.a.tone || 'wall'}/${x.b.tone || 'wall'} axis ${x.axis} side ${x.side}`).join('; ');
+
+test('layering: no visible coplanar faces in any building shape', () => {
+  for (const shape of [0, 1, 2, 3, 4, 5, 6]) for (const v of [0.1, 0.9]) {
+    const { parts, roof } = silhouette(shape, { x: 10, y: 20, w: 20, h: 12 }, 30, v);
+    for (const k of [0, 1, 2]) assert.deepEqual(coplanarOverlaps([...parts, ...roofGear(k, roof, 30)]), [], `shape ${shape} gear ${k}`);
+  }
+});
+
+test('layering: belts, rails, scaffolding, crates, floors and cranes never put two faces in one plane', () => {
+  const shell = { rect: { x: 10, y: 10, w: 24, h: 14 }, h: 12, H: 20, profile: silhouette(1, { x: 10, y: 10, w: 24, h: 14 }, 20, 0.5).parts };
+  const hunks = Array.from({ length: 12 }, (_, i) => ({ add: 30 + i, del: i % 3 ? 10 : 40 }));   // more changed lines than the file has, so belts want to overlap
+  const col = (o = {}) => column({ focused: true, x: 20, y: 17, w: 14, d: 8, z0: 20, add: 300, del: 200, loc: 120, hunks, parts: hunks.flatMap((h) => [{ kind: 'del', n: h.del }, { kind: 'add', n: h.add }]), ...o });
+  for (const focusStyle of ['lines', 'crates', 'side', 'facade']) for (const [add, del] of [[300, 200], [300, 0], [0, 200], [5, 5], [4000, 4000]]) {
+    const { parts } = siteParts(col({ add, del }), shell, { heightOf: height, focusStyle });
+    assert.deepEqual(coplanarOverlaps(parts), [], `${focusStyle} +${add} -${del}: ${show(coplanarOverlaps(parts))}`);
+  }
+  for (const h of [1, 4, 12, 30]) for (const slot of [{ x: 0, y: 0, w: 14, d: 6 }, { x: 0, y: 0, w: 5, d: 11 }]) assert.deepEqual(coplanarOverlaps(craneParts(slot, 5, h)), [], `crane ${h}`);
+  assert.deepEqual(coplanarOverlaps(tapeFloor({ x: 0, y: 0, w: 12, d: 7 }, 0, 2.4)), [], 'taped floor');
+  assert.deepEqual(coplanarOverlaps(scaffoldParts({ x: 0, y: 0, w: 20, h: 12 }, 15)), [], 'scaffold');
+  assert.deepEqual(coplanarOverlaps(scaffoldParts({ x: 0, y: 0, w: 6, h: 6 }, 7, { pad: 0, lift: 2.4, z0: 4, ground: false, t: 0.3 })), [], 'small scaffold tower');
 });

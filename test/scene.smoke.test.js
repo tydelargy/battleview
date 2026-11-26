@@ -122,6 +122,16 @@ test('scene wiring with a stand-in three', async () => {
   assert.equal(sc.info().columns, nCols);
   sc.setStyle({ mode: 'plain' });
 
+  // the focus views also work on the simple styles: a focused PR's columns become sites, the others stay toppers
+  sc.setPRs(prs, { mode: 'sqrt', focusId: '#2291', visible: null, fog: true, statusColors: {} }); await run(4);
+  assert.equal(sc.info().sites, 0, 'plain, default focus view (hunks): toppers only');
+  const topperCaps = count('ConeGeometry', false) + count('ConeGeometry', true);
+  sc.setStyle({ mode: 'plain', focus: 'crates' }); sc.setPRs(prs, { mode: 'sqrt', focusId: '#2291', visible: null, fog: true, statusColors: {} }); await run(4);
+  assert.equal(sc.info().sites, focus0().files.length, 'only the focused PR is drawn as sites on plain blocks');
+  assert.equal(count('ConeGeometry', false), 0, 'its columns have no cone caps'); assert.equal(count('ConeGeometry', true), nCols - focus0().files.length, 'the other PRs stay glass toppers');
+  sc.setStyle({ mode: 'colors', focus: 'lines' }); assert.equal(sc.info().sites, focus0().files.length); sc.setStyle({ mode: 'plain', focus: null });
+  assert.ok(topperCaps >= 0);
+
   // focus: the focused PR's columns become hunk stacks, everything else turns to glass
   const focus = prs.find((p) => p.id === '#2291');
   sc.setPRs(prs, { mode: 'sqrt', focusId: '#2291', visible: null, fog: true, statusColors: {} });

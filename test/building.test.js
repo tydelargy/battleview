@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fingerprint, draw, traits, indexCode, silhouette, roofGear, buildingFor, normaliseStyle, DEFAULT_STYLE } from '../web/building.js';
+import { focusView, FOCUS_VIEWS, fingerprint, draw, traits, indexCode, silhouette, roofGear, buildingFor, normaliseStyle, DEFAULT_STYLE } from '../web/building.js';
 import { buildLayout, hash } from '../web/layout.js';
 import { sampleFiles } from '../server/sample.js';
 import { planSpires } from '../web/spires.js';
@@ -120,4 +120,11 @@ test('toppers pack onto each silhouette roof and every one stays on it', () => {
       assert.equal(c.z0, roofs.get(c.path).height, 'and stands on the roof height');
     }
   }
+});
+
+test('the focus view is automatic until chosen: crates in Buildings, the classic hunks in the simple styles', () => {
+  assert.equal(DEFAULT_STYLE.focus, null);
+  assert.equal(focusView(style()), 'crates'); assert.equal(focusView(style({ mode: 'colors' })), 'hunks'); assert.equal(focusView(style({ mode: 'plain' })), 'hunks');
+  for (const v of FOCUS_VIEWS) { assert.equal(focusView(style({ mode: 'plain', focus: v })), v); assert.equal(normaliseStyle({ focus: v }).focus, v); }
+  assert.equal(normaliseStyle({ focus: 'neon' }).focus, null, 'junk goes back to automatic');
 });
