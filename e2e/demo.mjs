@@ -30,8 +30,8 @@ try {
 
   await step('the mock opens on the world: one city (acme/platform) is already there, with free hexes beside it', async () => {
     assert.equal((await info()).cities, 1); const w = await world(); assert.equal(w.cities[0].key, 'acme/platform'); assert.ok(w.slots.length >= 6);
-    const p = await screen(w.cities[0]); await page.mouse.move(p.sx, p.sy); await waitFor(() => /acme\/platform/.test(document.getElementById('wstats').textContent), null, 'widget');
-    await waitFor(() => /\d/.test(document.getElementById('ws-needs').textContent), null, 'numbers arrive');
+    assert.match(await page.textContent('#wtray'), /acme\/platform/, 'it has a card');
+    await waitFor(() => /\d/.test(document.querySelector('.wcard[data-id="acme--platform"] .ws.needs b')?.textContent || ''), null, 'numbers arrive');
     assert.equal(await page.isVisible('#worldBtn'), false, 'the back button is only inside a city');
   });
 
@@ -48,8 +48,8 @@ try {
 
   await step('going into the new city: its own map, its own PRs, your PRs tracked, the mock Jira linked', async () => {
     const b = (await world()).cities.find((c) => c.key === 'acme/billing-api'), p = await screen(b);
-    await page.mouse.move(p.sx, p.sy); await waitFor(() => /acme\/billing-api/.test(document.getElementById('wstats').textContent), null, 'widget names it');
-    await waitFor(() => document.getElementById('ws-mine').textContent.includes('2'), null, 'its numbers');
+    assert.equal((await info()).cards, 3, 'all three repos have a card');
+    await waitFor(() => document.querySelector('.wcard[data-id="acme--billing-api"] .ws.mine b')?.textContent === '2', null, 'its numbers are on its card');
     await page.mouse.click(p.sx, p.sy); await page.waitForSelector('body.in-city .card[data-id]', { timeout: 12000 });
     assert.match(await page.textContent('#sub'), /acme\/billing-api · sizes estimated/);
     await waitFor(() => document.querySelectorAll('.card[data-id]').length === 2, null, 'only your two PRs are tracked at first');
@@ -70,9 +70,10 @@ try {
   await step('back in the world, the city knows what is tracked, and the other cities are untouched', async () => {
     await page.click('#worldBtn'); await page.waitForSelector('#world:not([hidden]) canvas'); await waitFor(() => window.battlemap.world.info().cities === 3, null, 'world');
     const w = await world(), b = w.cities.find((c) => c.key === 'acme/billing-api'), m = w.cities.find((c) => c.key === 'acme/mobile-app');
-    await page.waitForTimeout(800); const p = await screen(b); await page.mouse.move(p.sx + 40, p.sy + 40); await page.mouse.move(p.sx, p.sy, { steps: 4 }); await waitFor(() => /acme\/billing-api/.test(document.getElementById('wstats').textContent), null, 'widget');
-    await waitFor(() => document.querySelector('#ws-tracking b').textContent === '3', null, 'tracking 3');
-    assert.equal(await page.textContent('#ws-mine b'), '2'); assert.equal(await page.textContent('#ws-needs b'), '5');
+    const card = '.wcard[data-id="acme--billing-api"]';
+    await waitFor(() => document.querySelector('.wcard[data-id="acme--billing-api"] .ws.tracking b')?.textContent === '3', null, 'tracking 3');
+    assert.equal(await page.textContent(`${card} .ws.mine b`), '2'); assert.equal(await page.textContent(`${card} .ws.needs b`), '5');
+    await page.click(`${card} .whead`); await page.waitForSelector(`${card}.open #ws-go`); assert.match(await page.textContent(card), /sizes are estimated/i, 'the card says the sizes are estimates');
     assert.equal(m.stats.tracked, 0, 'mobile-app has not been opened'); let got = 0; for (let i = 0; i < 40 && got !== 1; i++) { got = (await fetch(`${base}/r/acme--mobile-app/api/snapshot`).then((r) => r.json())).prs.length; if (got !== 1) await new Promise((r) => setTimeout(r, 200)); }
     assert.equal(got, 1, 'going into it shows its own PRs, with only yours tracked');
   });

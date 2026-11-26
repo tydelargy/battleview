@@ -200,10 +200,11 @@ Battle Map's first page is the **world**, and there is no separate mode to turn 
 
 ![The world: four cities on their hills, the hovered one showing its numbers](docs/screenshots/world.png)
 
-* **Hover a city** for three numbers: how many PRs you are *tracking* there, how many *you* have open, and how many *need action*. Hover shows the numbers only; **click a city** to go in (the full map you know, for that repo), and the **ALL REPOS** button brings you back. The numbers come from one light `gh pr list` per repo; a city's PRs are only read in full, and kept fresh, while you are in it.
+* **Every repo has a card** along the bottom, like the PR cards: its name, a badge for how many PRs need you, and three numbers: how many PRs you are *tracking* there, how many *you* have open, and how many *need action*. Pointing at a city lights up its card; click a card to expand it in place (details, **GO IN**, **FORGET**) while the others stay in reach. **Click a city** to go in (the full map you know, for that repo), and the **ALL REPOS** button brings you back. The numbers come from one light `gh pr list` per repo; a city's PRs are only read in full, and kept fresh, while you are in it.
 * **Drag a city** onto another free hex to move it. The map keeps itself together: a city can only move to an empty hex that touches another city, and never in a way that splits the group in two. Layout is saved.
 * **Hover a glowing free hex** (the faint ones beside the group) and press **+** to add a repo by URL (`https://github.com/org/repo`, `org/repo`, or an Enterprise URL). **Nothing is ever cloned.** The city is built from what GitHub says about the default branch (`gh api`: the file tree), so file sizes are estimates (about 38 bytes to a line) and the map says so. Jira is shared by every city, and each city has its own tracking rules, picks and notifications.
-* **Forget** (in the widget, asks twice) removes a city and its saved state.
+* **Forget** (on the expanded card, asks twice) removes a city and its saved state.
+* **Any repo, any size.** A city is drawn from at most a few hundred of its biggest files (fewer as the world fills up), buildings have a ceiling however big a file is, and bad or odd paths and sizes are cleaned or dropped, so a repo with a hundred thousand files costs the same to draw as one with ten.
 
 ```
 battlemap                            # data in ~/.local/share/battlemap  (--data DIR to change it)

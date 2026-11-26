@@ -147,7 +147,9 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
     if (p === '/api/hub/world' && m === 'GET') return json(res, 200, worldView());
     if (p === '/api/hub/tree' && m === 'GET') {                              // a city's shape for the world view: just path, lines, complexity. Looking at it does not open the city
       const id = url.searchParams.get('id') || '', t = ID.test(id) && find(id) ? readTree(id) : null;
-      return t ? json(res, 200, { id, files: t.files.map((f) => [f.path, f.loc, f.complexity]) }) : json(res, 404, { error: 'no such city' });
+      const limit = Math.min(2000, Math.max(1, Number(url.searchParams.get('limit')) || 600));      // the world draws a few hundred buildings per city: send the biggest files, not all 6000
+      const files = t ? (t.files.length > limit ? [...t.files].sort((a, b) => b.loc - a.loc || (a.path < b.path ? -1 : 1)).slice(0, limit) : t.files) : null;
+      return t ? json(res, 200, { id, files: files.map((f) => [f.path, f.loc, f.complexity]), total: t.files.length }) : json(res, 404, { error: 'no such city' });
     }
     const b = m === 'GET' ? {} : await readJson(req);
     if (p === '/api/hub/add' && m === 'POST') return json(res, 200, await addCity(b.url, b.q === undefined ? null : { q: b.q, r: b.r }));

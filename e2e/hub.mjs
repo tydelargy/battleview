@@ -51,7 +51,7 @@ try {
 
   await step('an empty world offers one glowing hex; hovering it shows a + and pressing it asks for a repo URL', async () => {
     assert.equal((await info()).cities, 0); assert.equal((await info()).slots, 1);
-    assert.match(await page.textContent('#wstats'), /first repo/);
+    assert.match(await page.textContent('#wtray'), /No repos yet[\s\S]*first repo/);
     const p = await screen({ q: 0, r: 0 }); await page.mouse.move(p.sx, p.sy);
     await waitFor(() => !document.getElementById('wplus').hidden, null, 'the + shows');
     await page.click('#wplus'); await page.waitForSelector('#wadd-url');
@@ -65,7 +65,7 @@ try {
     await addAt({ q: 0, r: 0 }, 'https://github.com/org/alpha');
     await waitFor(() => window.battlemap.world.info().cities === 1, null, 'the city appears');
     assert.ok((await info()).boxes > 60, 'it has buildings');
-    await waitFor(() => document.getElementById('ws-needs') && document.getElementById('ws-needs').textContent.includes('3'), null, 'needs-action shows once the numbers arrive');
+    await waitFor(() => document.querySelector('.wcard[data-id="org--alpha"] .ws.needs b')?.textContent.includes('3'), null, 'needs-action shows once the numbers arrive');
     const w = await worldApi(), c = w.cities[0];
     assert.deepEqual([c.stats.open, c.stats.mine, c.stats.needs], [3, 1, 3], 'three open, one yours, and all three need you: your red CI, a review asked of you, and a review request nobody has answered');
     assert.equal(fs.existsSync(path.join(data, 'cities', 'org--alpha', 'tree.json')), true);
@@ -84,9 +84,15 @@ try {
 
   await step('hovering a city shows its three numbers, a click goes in, and the back button returns', async () => {
     const w = await worldApi(), a = w.cities.find((c) => c.id === 'org--alpha'), p = await screen(a);
-    await hover(p); await waitFor(() => /org\/alpha/.test(document.getElementById('wstats').textContent), null, 'the widget names the hovered city');
-    const t = await page.textContent('#wstats'); assert.match(t, /Tracking/); assert.match(t, /Yours open/); assert.match(t, /Need action/);
-    assert.equal(await page.textContent('#ws-mine b'), '1'); assert.equal(await page.textContent('#ws-needs b'), '3');
+    await hover(p); await waitFor(() => document.querySelector('.wcard[data-id="org--alpha"]')?.classList.contains('hot'), null, 'pointing at a city lights up its card');
+    assert.equal((await info()).cards, 3, 'every repo has a card, not just the last one touched');
+    const t = await page.textContent('.wcard[data-id="org--alpha"]'); assert.match(t, /Tracking/); assert.match(t, /Yours/); assert.match(t, /Need action/);
+    assert.equal(await page.textContent('.wcard[data-id="org--alpha"] .ws.mine b'), '1'); assert.equal(await page.textContent('.wcard[data-id="org--alpha"] .ws.needs b'), '3');
+    assert.equal((await info()).selected, 'org--gamma', 'adding a repo opens its card'); await page.click('.wcard[data-id="org--gamma"] .whead'); assert.equal(await page.$('#ws-go'), null, 'a card closes again, back to compact');
+    await page.click('.wcard[data-id="org--alpha"] .whead'); await page.waitForSelector('.wcard[data-id="org--alpha"].open #ws-go'); assert.equal((await info()).cards, 3, 'opening one keeps the others in reach');
+    await page.click('.wcard[data-id="org--beta"] .whead'); await page.waitForSelector('.wcard[data-id="org--beta"].open'); assert.equal(await page.$('.wcard[data-id="org--alpha"].open'), null, 'one open at a time');
+    await page.click('.wcard[data-id="org--beta"] .whead'); assert.equal(await page.$('#ws-go'), null, 'and it closes again');
+    await page.mouse.move(p.sx + 30, p.sy + 30);
     await page.mouse.click(p.sx, p.sy);
     await page.waitForSelector('body.in-city .card', { timeout: 10000 });
     assert.match(await page.textContent('#sub'), /org\/alpha · sizes estimated/);
@@ -122,7 +128,7 @@ try {
   await step('forgetting a city asks twice and removes it and its saved state', async () => {
     await page.reload(); await page.waitForSelector('#world:not([hidden]) canvas'); await waitFor(() => window.battlemap.world.info().cities === 3, null, 'loaded');
     const w = await worldApi(), cities = w.cities, forgettable = cities.find((c) => cities.filter((o) => o !== c).every((o) => cities.filter((x) => x !== c).some((x) => x !== o && Math.max(Math.abs(o.q - x.q), Math.abs(o.r - x.r), Math.abs(o.q + o.r - x.q - x.r)) === 1))) || cities[0];
-    const p = await screen(forgettable); await hover(p); await waitFor((id) => new RegExp(id.replace('--', '/')).test(document.getElementById('wstats').textContent), forgettable.id, 'widget');
+    await page.click(`.wcard[data-id="${forgettable.id}"] .whead`); await page.waitForSelector('#ws-forget');
     await page.click('#ws-forget'); assert.match(await page.textContent('#ws-forget'), /SURE/); await page.click('#ws-forget');
     await waitFor(() => window.battlemap.world.info().cities === 2, null, 'gone');
     assert.equal(fs.existsSync(path.join(data, 'cities', forgettable.id)), false);
@@ -133,7 +139,7 @@ try {
     await waitFor(() => !document.getElementById('wplus').hidden, null, 'plus');
     await page.click('#wplus'); await page.fill('#wadd-url', '<img src=x onerror="window.__pwned=1">/x'); await page.click('#wadd-go');
     await page.waitForFunction(() => /does not look like a repository/.test(document.getElementById('wadd-msg').textContent), null, { timeout: 6000 });
-    assert.equal(await page.$$eval('#wadd img, #wstats img', (e) => e.length), 0); assert.equal(await page.evaluate(() => window.__pwned), undefined);
+    assert.equal(await page.$$eval('#wadd img, #wtray img', (e) => e.length), 0); assert.equal(await page.evaluate(() => window.__pwned), undefined);
     await page.click('#wadd-cancel');
   });
 

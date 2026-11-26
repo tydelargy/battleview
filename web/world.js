@@ -5,10 +5,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { toWorld, fromWorld, hexKey, canMove, frontier } from './hex.js';
 import { biomeFor } from './biome.js';
-import { cityBoxes } from './cityshape.js';
+import { cityBoxes, maxFilesFor } from './cityshape.js';
+import { PLOT, plotGeometry, cityScale, placeProps } from './terrain.js';
 
 const S = 10;                                   // a hex's circumradius in world units
-const CITY = 1.34 * S;                          // a city's footprint is about this wide
 const PROP_COLORS = { pine: 0x2f6f48, tree: 0x4f9e3e, bush: 0x6fb057, flower: 0xf2c94c, cactus: 0x5aa05a, rock: 0x8d9299, dune: 0xe2c27a, lava: 0xff7a3d, reed: 0x9ccf8a };
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _e = new THREE.Euler();
 
@@ -33,7 +33,7 @@ export function createWorld(host, handlers = {}) {
   const unit = new THREE.BoxGeometry(1, 1, 1); unit.translate(0, 0.5, 0);
   const overlay = document.createElement('div'); overlay.className = 'world-overlay'; overlay.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none'; host.appendChild(overlay);
 
-  const st = { cities: [], slots: [], shapes: new Map(), byHex: new Map(), groups: [], slotMeshes: new Map(), labels: new Map(), hover: null, drag: null, size: { w: 1, h: 1 }, fitted: false };
+  const st = { cities: [], slots: [], shapes: new Map(), budget: 0, byHex: new Map(), groups: [], slotMeshes: new Map(), labels: new Map(), hover: null, drag: null, size: { w: 1, h: 1 }, fitted: false };
   const world = new THREE.Group(); scene.add(world);
   const slotMat = () => new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.06, depthWrite: false });
 
@@ -42,32 +42,33 @@ export function createWorld(host, handlers = {}) {
 
   // ---- build the world from the list of cities ----
   function clearWorld() { for (const g of st.groups) { world.remove(g); g.traverse((o) => { if (o.geometry && o.geometry !== unit && !Object.values(propGeo).includes(o.geometry)) o.geometry.dispose?.(); o.material?.dispose?.(); if (o.isInstancedMesh) o.dispose?.(); }); } st.groups = []; for (const m of st.slotMeshes.values()) { world.remove(m); m.geometry.dispose(); m.material.dispose(); } st.slotMeshes.clear(); }
-  const PROP = { pine: () => new THREE.ConeGeometry(0.5, 1.5, 6), tree: () => new THREE.IcosahedronGeometry(0.62, 0), bush: () => new THREE.IcosahedronGeometry(0.4, 0), flower: () => new THREE.BoxGeometry(0.18, 0.5, 0.18), cactus: () => new THREE.CylinderGeometry(0.2, 0.24, 1.2, 6), rock: () => new THREE.DodecahedronGeometry(0.5, 0), dune: () => new THREE.SphereGeometry(0.8, 8, 4), lava: () => new THREE.ConeGeometry(0.28, 0.8, 5), reed: () => new THREE.CylinderGeometry(0.06, 0.06, 1.1, 4) };
+  const PROP = { pine: () => new THREE.ConeGeometry(0.5, 1.5, 6), tree: () => new THREE.IcosahedronGeometry(0.62, 0), bush: () => new THREE.IcosahedronGeometry(0.4, 0), flower: () => new THREE.BoxGeometry(0.18, 0.5, 0.18), cactus: () => new THREE.CylinderGeometry(0.2, 0.24, 1.2, 6), rock: () => new THREE.DodecahedronGeometry(0.5, 0), dune: () => { const g2 = new THREE.SphereGeometry(0.8, 8, 4); g2.scale(1, 0.45, 1); return g2; }, lava: () => new THREE.ConeGeometry(0.28, 0.8, 5), reed: () => new THREE.CylinderGeometry(0.06, 0.06, 1.1, 4) };
   const propGeo = {}; for (const k of Object.keys(PROP)) propGeo[k] = PROP[k]();          // shared by every city
   function build() {
     clearWorld(); st.byHex.clear();
     for (const c of st.cities) {
       st.byHex.set(hexKey(c), c.id);
       const b = biomeFor(c.key), at = toWorld(c, S), g = new THREE.Group(); g.position.set(at.x, 0, at.z); g.userData.id = c.id;
-      const rim = new THREE.Mesh(hexGeo(S * 0.99, S * 0.99, 0.6), new THREE.MeshStandardMaterial({ color: b.rim, roughness: 1 }));
-      const base = 0.6 + b.hill.height * S * 0.12, hill = new THREE.Mesh(hexGeo(S * 0.86, S * 0.96, base - 0.6), new THREE.MeshStandardMaterial({ color: b.ground, roughness: 0.95 })); hill.position.y = 0.6;
-      const swell = b.hill.bulge * S * 0.5, cap = new THREE.Mesh(hexGeo(S * 0.7, S * 0.84, swell), new THREE.MeshStandardMaterial({ color: new THREE.Color(b.ground).offsetHSL(0, 0, 0.03), roughness: 0.95 })); cap.position.y = base;
-      const top = base + swell; g.add(rim, hill, cap);
-      // the city: every box in one instanced mesh that lives in this city's group, so it travels with the plot when dragged
+      const gm = plotGeometry(S, b), base = gm.base, top = gm.top;
+      const rim = new THREE.Mesh(hexGeo(S * PLOT.rim, S * PLOT.rim, PLOT.rimH), new THREE.MeshStandardMaterial({ color: b.rim, roughness: 1 }));
+      const hill = new THREE.Mesh(hexGeo(S * PLOT.skirtTop, S * PLOT.skirtBottom, base - PLOT.rimH), new THREE.MeshStandardMaterial({ color: b.ground, roughness: 0.95 })); hill.position.y = PLOT.rimH;
+      const cap = new THREE.Mesh(hexGeo(S * PLOT.capTop, S * PLOT.capBottom, gm.swell), new THREE.MeshStandardMaterial({ color: new THREE.Color(b.ground).offsetHSL(0, 0, 0.03), roughness: 0.95 })); cap.position.y = base;
+      g.add(rim, hill, cap); g.userData.top = top;
+      // the city: every box in one instanced mesh that lives in this city's group, so it travels with the plot when dragged.
+      // Scaled so its farthest corner is inside the flat summit (terrain.js): none of it hangs over the slope.
       const shape = st.shapes.get(c.id);
       if (shape?.boxes.length) {
-        const mesh = new THREE.InstancedMesh(unit, new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.04 }), shape.boxes.length);
-        shape.boxes.forEach((x, i) => { _m.compose(_p.set(x.x * CITY, top + x.y * CITY, x.z * CITY), _q.identity(), _s.set(x.w * CITY, Math.max(0.05, x.h * CITY * 3.2), x.d * CITY)); mesh.setMatrixAt(i, _m); mesh.setColorAt(i, _c.setHSL(x.hue / 360, (x.sat / 100) * 0.75, (x.light - 6) / 100)); });
+        const K = cityScale(shape.extent.w / 2, shape.extent.d / 2) * S, mesh = new THREE.InstancedMesh(unit, new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.04 }), shape.boxes.length);
+        shape.boxes.forEach((x, i) => { _m.compose(_p.set(x.x * K, top + x.y * K * 3.2, x.z * K), _q.identity(), _s.set(x.w * K, Math.max(0.05, x.h * K * 3.2), x.d * K)); mesh.setMatrixAt(i, _m); mesh.setColorAt(i, _c.setHSL(x.hue / 360, (x.sat / 100) * 0.75, (x.light - 6) / 100)); });
         mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true; mesh.frustumCulled = false; g.add(mesh);
       }
-      // the land's own things: trees, cacti, rocks, dunes, lava, reeds, on the ring around the city
-      const byType = {}; for (const p of b.props) (byType[p.type] ||= []).push(p);
+      // the land's own things, set on the real surface by terrain.js: on the ground, inside the hexagon, outside the city
+      const byType = {}; for (const p of placeProps(b.props, gm)) (byType[p.type] ||= []).push(p);
       const accent = new THREE.Color(b.accent);
       for (const [type, list] of Object.entries(byType)) {
         const mesh = new THREE.InstancedMesh(propGeo[type], new THREE.MeshStandardMaterial({ roughness: 0.9, emissive: type === 'lava' ? 0x7a2a00 : 0x000000 }), list.length);
         list.forEach((p, i) => {
-          const sc = p.scale * 0.9 * (type === 'dune' ? 1.3 : 1), lift = { dune: 0.1, rock: 0.15, pine: 0.7, tree: 0.8 }[type] ?? 0.45;
-          _m.compose(_p.set(p.x * S * 0.98, top + lift * sc, p.z * S * 0.98), _q.setFromEuler(_e.set(0, p.turn, 0)), _s.set(sc, type === 'dune' ? sc * 0.45 : sc, sc));
+          _m.compose(_p.set(p.x * S, p.y, p.z * S), _q.setFromEuler(_e.set(0, p.turn, 0)), _s.set(p.scale, p.scale, p.scale));
           mesh.setMatrixAt(i, _m); mesh.setColorAt(i, _c.set(PROP_COLORS[type]).lerp(accent, type === 'flower' ? 0.6 : 0.12).offsetHSL((p.turn % 0.3) * 0.05, 0, (p.scale - 1) * 0.08));
         });
         mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true; mesh.frustumCulled = false; g.add(mesh);
@@ -140,7 +141,7 @@ export function createWorld(host, handlers = {}) {
     for (const g of st.groups) if (g.userData.id) { const base = toWorld(st.cities.find((c) => c.id === g.userData.id) || { q: 0, r: 0 }, S), d = st.drag?.id === g.userData.id && st.drag.at; g.position.x += ((d ? st.drag.at.x : base.x) - g.position.x) * 0.35; g.position.z += ((d ? st.drag.at.z : base.z) - g.position.z) * 0.35; g.position.y += ((d ? 3 : 0) - g.position.y) * 0.3; }
     controls.update(); renderer.render(scene, camera);
     // labels follow their city; the plus follows a hovered slot
-    for (const c of st.cities) { const el2 = st.labels.get(c.id); if (!el2) continue; const w = toWorld(c, S), p = project(w.x, 9, w.z); el2.style.display = p.vis ? 'flex' : 'none'; el2.style.transform = `translate(${p.sx.toFixed(1)}px,${p.sy.toFixed(1)}px) translate(-50%,-100%)`; el2.classList.toggle('hot', st.hover?.id === c.id); }
+    for (const c of st.cities) { const el2 = st.labels.get(c.id); if (!el2) continue; const w = toWorld(c, S), p = project(w.x, 9, w.z); el2.style.display = p.vis ? 'flex' : 'none'; el2.style.transform = `translate(${p.sx.toFixed(1)}px,${p.sy.toFixed(1)}px) translate(-50%,-100%)`; el2.classList.toggle('hot', st.hover?.id === c.id || st.pin === c.id); }
     handlers.onFrame?.({ project, hover: st.hover, toWorld: (h) => toWorld(h, S) });
   }
   requestAnimationFrame(frame);
@@ -149,10 +150,13 @@ export function createWorld(host, handlers = {}) {
     /** cities: [{id, key, q, r, ...}], slots: [{q, r}], files: Map(id -> [[path, loc, complexity]]) */
     set(cities, slots, files) {
       st.cities = cities; st.slots = slots;
-      for (const c of cities) if (files.has(c.id) && !st.shapes.has(c.id)) st.shapes.set(c.id, cityBoxes(files.get(c.id).map(([path, loc, complexity]) => ({ path, loc, complexity }))));
+      const budget = maxFilesFor(cities.length); if (budget !== st.budget) { st.shapes.clear(); st.budget = budget; }       // a crowded world gets lighter cities
+      for (const c of cities) if (files.has(c.id) && !st.shapes.has(c.id)) st.shapes.set(c.id, cityBoxes(files.get(c.id).map(([path, loc, complexity]) => ({ path, loc, complexity })), { maxFiles: budget }));
       build();
       for (const c of cities) { const el2 = st.labels.get(c.id); if (!el2) continue; el2.querySelector('.wl-n').textContent = c.name; const n = c.stats?.needs; const x = el2.querySelector('.wl-x'); x.textContent = n ? String(n) : ''; x.hidden = !n; x.title = n ? `${n} need${n === 1 ? 's' : ''} you` : ''; }
     },
+    /** Light up one city's label (the one whose card is open), or none. */
+    highlight(id) { st.pin = id || null; },
     fit, project, info: () => ({ cities: st.cities.length, slots: st.slotMeshes.size, boxes: st.groups.reduce((a, g) => { let n = 0; g.traverse((o) => { if (o.isInstancedMesh && o.geometry === unit) n += o.count; }); return a + n; }, 0), labels: st.labels.size, hover: st.hover, dragging: !!st.drag }),
     legal, hexScreen: (h) => { const w = toWorld(h, S); return project(w.x, 2, w.z); },
     dispose() { running = false; clearWorld(); renderer.dispose(); host.removeChild(renderer.domElement); host.removeChild(overlay); },

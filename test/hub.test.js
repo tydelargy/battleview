@@ -140,7 +140,9 @@ test('a city is its own app under /r/<id>/: its files come from the tree, its PR
     assert.equal((await (await s.post('/r/org--alpha/api/watch/pick', { ref: '#2' })).json()).ok, true);
     assert.equal((await s.get('/r/org--alpha/api/snapshot')).prs.length, 2);
     assert.equal((await s.get('/r/org--beta/api/snapshot')).watch.picks?.length ?? 0, 0, 'picking in one city does not touch another');
-    const shape = await s.get('/api/hub/tree?id=org--alpha'); assert.equal(shape.files.length, 6); assert.deepEqual(Object.keys(shape), ['id', 'files']); assert.equal(typeof shape.files[0][0], 'string');
+    const shape = await s.get('/api/hub/tree?id=org--alpha'); assert.equal(shape.files.length, 6); assert.deepEqual(Object.keys(shape), ['id', 'files', 'total']); assert.equal(shape.total, 6);
+    const few = await s.get('/api/hub/tree?id=org--alpha&limit=2'); assert.equal(few.files.length, 2); assert.equal(few.total, 6, 'the biggest two of six, and it says how many there are'); assert.ok(few.files[0][1] >= few.files[1][1] && few.files.every((f) => f[1] >= Math.min(...shape.files.map((g) => g[1]))));
+    assert.equal((await s.get('/api/hub/tree?id=org--alpha&limit=banana')).files.length, 6, 'a bad limit means the default'); assert.equal(typeof shape.files[0][0], 'string');
     assert.equal((await fetch(s.info.url + '/api/hub/tree?id=org--nope')).status, 404); assert.equal(s.hub.apps.has('org--beta'), true, 'looking at the tree is not going in'); assert.equal(s.hub.apps.has('org--gamma'), false);
     assert.equal((await fetch(s.info.url + '/r/org--nope/api/snapshot')).status, 404); assert.equal((await fetch(s.info.url + '/r/BAD ID/api/snapshot')).status, 404);
     assert.equal((await fetch(s.info.url + '/api/snapshot')).status, 404, 'the hub has no snapshot of its own');
