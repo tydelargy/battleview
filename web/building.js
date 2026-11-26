@@ -9,7 +9,7 @@ export const MATERIALS = ['concrete', 'brick', 'stone', 'steel'];
 export const WINDOW_STYLES = ['grid', 'bands', 'slits'];
 export const ROOF_GEAR = ['antenna', 'water tank', 'vents'];
 export const STYLE_MODES = { plain: 'Plain', colors: 'Colours', full: 'Buildings' };
-export const DEFAULT_STYLE = { mode: 'full', spread: 22, density: 1.1, variety: 7, height: 1.5, texture: true, focus: 'side', salt: 0, codes: true };
+export const DEFAULT_STYLE = { mode: 'full', spread: 22, density: 1.1, variety: 7, height: 1.5, texture: true, focus: 'lines', salt: 0, codes: true };
 
 /** Fingerprint of a file: FNV-1a 32 bit over "path:salt". */
 export const fingerprint = (path, salt = 0) => hash(`${path}:${salt | 0}`);
@@ -32,7 +32,7 @@ export function normaliseStyle(raw) {
   s.variety = Math.round(num(raw.variety, 1, SHAPES.length, s.variety));
   s.height = Math.round(num(raw.height, 1, 3, s.height) * 10) / 10;
   if (typeof raw.texture === 'boolean') s.texture = raw.texture;
-  if (raw.focus === 'side' || raw.focus === 'facade') s.focus = raw.focus;
+  if (raw.focus === 'side' || raw.focus === 'facade' || raw.focus === 'lines') s.focus = raw.focus;
   s.salt = Number.isInteger(raw.salt) && raw.salt >= 0 && raw.salt < 1e9 ? raw.salt : 0;
   if (typeof raw.codes === 'boolean') s.codes = raw.codes;
   return s;
@@ -138,11 +138,11 @@ export function roofGear(kind, roof, H) {
  */
 export function buildingFor(leaf, style, { gear = true } = {}) {
   const t = traits(leaf.path, style, leaf.hue);
-  if (style.mode !== 'full') return { t, parts: [{ x: leaf.r.x, y: leaf.r.y, w: leaf.r.w, d: leaf.r.h, z: 0, h: leaf.height, dl: 0 }], roof: { ...leaf.r, z: leaf.height }, shell: { rect: leaf.r, h: leaf.height } };
+  if (style.mode !== 'full') return { t, parts: [{ x: leaf.r.x, y: leaf.r.y, w: leaf.r.w, d: leaf.r.h, z: 0, h: leaf.height, dl: 0 }], roof: { ...leaf.r, z: leaf.height }, shell: { rect: leaf.r, h: leaf.height, H: leaf.height, profile: null } };
   // Each building stands on its lot with a margin of its own (up to 28% a side), so neighbours differ in width and
   // depth and there are gaps between them, like blocks of a city. Height is complexity times one global multiplier.
   const { fx, fy, ox, oy } = t.lot, r = leaf.r, w = Math.max(0.5, r.w * fx), h = Math.max(0.5, r.h * fy);
   const rect = { x: r.x + (r.w - w) * ox, y: r.y + (r.h - h) * oy, w, h }, H = leaf.height * style.height;
   const { parts, roof, shell } = silhouette(t.shape, rect, H, t.shapeV);
-  return { t, parts: gear ? [...parts, ...roofGear(t.gear, roof, H)] : parts, roof, shell: { rect, h: shell } };
+  return { t, parts: gear ? [...parts, ...roofGear(t.gear, roof, H)] : parts, roof, shell: { rect, h: shell, H, profile: parts } };
 }

@@ -97,6 +97,7 @@ const floorsFor = (n, heightOf) => (n > 0 ? clamp(Math.round(heightOf(n) / FLOOR
 export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = 'side' } = {}) {
   const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
   if (col.focused && focusStyle === 'side') return sideBySide(col, slot, heightOf);
+  if (col.focused && focusStyle === 'lines' && shell) return lineBands(col, shell);
   const delHunks = col.parts.filter((p) => p.kind === 'del').map((p) => p.n);
   const counts = col.focused && delHunks.length ? delHunks.map((n) => floorsFor(n, heightOf)) : [floorsFor(col.del, heightOf)];
   let z = col.z0, used = 0;
@@ -127,4 +128,40 @@ function sideBySide(col, slot, heightOf) {
   if (na) parts.push(...scaffoldParts({ x: a.x - a.w / 2, y: a.y - a.d / 2, w: a.w, h: a.d }, na * FLOOR_H, { pad: 0, lift: FLOOR_H, z0: col.z0, ground: false, t: clamp(Math.min(a.w, a.d) * 0.06, 0.2, 0.5), braces: na, maxPoles: 12 }));
   for (let i = 0; i < nd; i++) parts.push(...tapeFloor(b, col.z0 + i * FLOOR_H, FLOOR_H));
   return { parts, top: col.z0 + Math.max(na, nd, 1) * FLOOR_H };
+}
+
+/**
+ * The file's lines laid onto its building: the walled height is the whole file, line 1 at the top and the last line
+ * at the bottom, and every hunk is a belt around the building at its place in the file. A belt is as thick as the
+ * share of the file it covers (green for lines added, red for lines deleted, the red under the green), so how much
+ * of the file changed, and where, is read straight off the building. A thin ruler runs up one corner with a tick
+ * every quarter of the file. Hunks without a `start` line are spread evenly in file order (the caller can say so).
+ * This view is relative to the file; the global diff scale is the overview's job.
+ */
+export function lineBands(col, shell) {
+  const { rect } = shell, H = shell.H ?? shell.h, o = 0.3, loc = Math.max(1, col.loc || 1), parts = [];
+  const hunks = col.hunks?.length ? col.hunks : [{ add: col.add, del: col.del }], n = hunks.length;
+  // the outline of the building at height z: the tier (or tiers) the belt crosses, so belts follow the silhouette
+  const outline = (z) => {
+    const at = (shell.profile || []).filter((p) => p.z <= z + 1e-9 && z <= p.z + p.h + 1e-9);
+    if (!at.length) return rect;
+    const x0 = Math.min(...at.map((p) => p.x)), y0 = Math.min(...at.map((p) => p.y));
+    return { x: x0, y: y0, w: Math.max(...at.map((p) => p.x + p.w)) - x0, h: Math.max(...at.map((p) => p.y + p.d)) - y0 };
+  };
+  const ring = (z, h, tone) => {
+    const r = outline(z + h / 2), x0 = r.x - o, y0 = r.y - o, W = r.w + 2 * o, D = r.h + 2 * o;
+    parts.push({ x: x0 + W / 2, y: y0, w: W, d: o, z, h, tone, ground: true }, { x: x0 + W / 2, y: y0 + D, w: W, d: o, z, h, tone, ground: true },
+      { x: x0, y: y0 + D / 2, w: o, d: D, z, h, tone, ground: true }, { x: x0 + W, y: y0 + D / 2, w: o, d: D, z, h, tone, ground: true });
+  };
+  hunks.forEach((hk, i) => {
+    const at = hk.start != null ? clamp((hk.start - 1) / loc, 0, 1) : (i + 0.5) / n;            // where in the file this hunk starts
+    const a = hk.add > 0 ? Math.max(0.35, (hk.add / loc) * H) : 0, d = hk.del > 0 ? Math.max(0.35, (hk.del / loc) * H) : 0;
+    let top = clamp(H * (1 - at), a + d, H);                                                        // line 1 is the roof, the last line the ground
+    if (a) { ring(top - a, a, 'add'); top -= a; }
+    if (d) ring(top - d, d, 'tape');
+  });
+  const ruler = { x: rect.x - 2 * o, y: rect.y - 2 * o };
+  parts.push({ ...ruler, w: 0.18, d: 0.18, z: 0, h: H, tone: 'metal', ground: true });
+  for (let k = 0; k <= 4; k++) parts.push({ x: ruler.x, y: ruler.y, w: 0.9, d: 0.9, z: Math.min(H - 0.1, (H * k) / 4), h: 0.1, tone: 'metal', ground: true });
+  return { parts, top: col.z0 };
 }

@@ -26,7 +26,7 @@ export function normalisePRs(input, identity = { prAuthors: ['you'] }) {
     const files = (Array.isArray(raw.files) ? raw.files : []).filter((f) => f && f.path).map((f) => {
       const add = Math.max(0, Number(f.add) || 0), del = Math.max(0, Number(f.del) || 0);
       const real = Array.isArray(f.hunks) && f.hunks.length;
-      return { path: f.path, add, del, hunks: real ? f.hunks.map((h) => ({ add: Math.max(0, +h.add || 0), del: Math.max(0, +h.del || 0) })) : synthHunks(f.path, add, del), syntheticHunks: !real };
+      return { path: f.path, add, del, hunks: real ? f.hunks.map((h) => ({ add: Math.max(0, +h.add || 0), del: Math.max(0, +h.del || 0), ...(Number.isFinite(+h.start) && +h.start >= 1 ? { start: Math.floor(+h.start) } : {}) })) : synthHunks(f.path, add, del), syntheticHunks: !real };
     });
     prs.push({
       id: String(raw.id), number: raw.number ?? null, title: String(raw.title || raw.id), branch: raw.branch || '', author: raw.author || 'unknown',

@@ -119,7 +119,7 @@ export function planSpires({ byPath, prs, mode = 'sqrt', focusId = null, visible
       const focused = e.pr.id === focusId;
       const { total, parts } = columnParts(e, mode, focused);
       const lines = e.f.add + e.f.del;
-      columns.push({ ...boxes[i], z0: leaf.height, total, parts, prId: e.pr.id, path, focused, dimmed: !!focusId && !focused, status: e.pr.status, add: e.f.add, del: e.f.del, lines, pct: lines / Math.max(1, leaf.loc), sharedWith: entries.length - 1 });
+      columns.push({ ...boxes[i], z0: leaf.height, total, parts, prId: e.pr.id, path, focused, dimmed: !!focusId && !focused, status: e.pr.status, add: e.f.add, del: e.f.del, lines, pct: lines / Math.max(1, leaf.loc), sharedWith: entries.length - 1, hunks: e.f.hunks || null, synthetic: !!e.f.syntheticHunks, loc: leaf.loc });
     });
   }
   return columns;
