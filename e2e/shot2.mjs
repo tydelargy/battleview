@@ -18,6 +18,7 @@ await new Promise((r) => srv.stdout.on('data', (d) => /Battle Map at/.test(Strin
 const toStart = "eval:document.getElementById('cards').scrollLeft=0";   // selecting a PR scrolls the tray; start the next shot from the left
 const README = ['shot:overview', 'view:3d', 'wait:2500', 'shot:3d', 'view:iso', 'wait:2500',
   'click:#layersBtn', 'wait:500', 'shot:layers', 'click:#layersBtn',
+  'file:packages/core/domain/pricing.ts', 'wait:1800', 'shot:buildings', 'eval:window.battlemap.state.scene.flyHome(0)', 'wait:1200',
   'click:.card[data-id="#2291"]', 'wait:3000', 'shot:hunks', 'eval:window.battlemap.selectPR(null)', 'wait:2500', toStart,
   'click:#filterBtn', 'wait:600', 'shot:filters', 'click:#filterBtn', 'wait:300',
   'feed:sample', 'rule:author:kofi', 'rule:path:packages/core/domain/', 'pick:#2279', 'feed:sample-without-#2284', 'wait:2500', toStart, 'wait:300', 'shot:tracking',

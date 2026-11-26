@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { SCALES, TOPPERS, scaleTicks, DIFF_COLORS, MIN_COVER } from './spires.js';
 import { authorColor, epicEmblem, flagLabel, EMBLEMS } from './sigil.js';
+import { STYLE_MODES, normaliseStyle } from './building.js';
 import { SORTS, SORT_HELP, AGE_STEPS, waitingDays, emptyFilters, normaliseFilters, applyFilters, sortPRs, activeCount, anyFilter, describeFilters, ageDays, formatAge } from './filters.js';
 
 const STATUS = {
@@ -37,7 +38,7 @@ function fill(el, ...kids) {
 }
 const initials = (a) => (a.replace(/[^A-Za-z0-9 ._-]/g, '').split(/[ ._-]+/).filter(Boolean).map((s) => s[0]).join('').slice(0, 2) || a.slice(0, 2)).toUpperCase();
 
-const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, wmarks: ls.get('wmarks', true) };
+const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, wmarks: ls.get('wmarks', true), bstyle: normaliseStyle(ls.get('bstyle', null)) };
 
 /* ---------- scene (optional: the UI still works if WebGL or three is unavailable) ---------- */
 async function startScene() {
@@ -101,6 +102,7 @@ function setFilters(patch) {
 const clearFilters = () => setFilters({ ...emptyFilters(), sort: state.filters.sort });
 function applyScene() {
   const sc = state.scene, s = state.snap; if (!sc || !s) return;
+  sc.setStyle(state.bstyle);
   sc.setFiles(s.files);
   sc.setUI({ labels: state.labels, flags: state.flags, lines: state.lines, watched: state.wmarks });
   sc.setWatched(s.watch.watchedPaths);
@@ -267,6 +269,32 @@ function seg(options, current, onPick, label) {
 function toggle(label, on, onChange, id) {
   return h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id, checked: on, onchange: (e) => onChange(e.target.checked) }), label);
 }
+const BSTYLE_HELP = {
+  plain: 'Every file is a plain block in its folder\u2019s colour.',
+  colors: 'Every file gets its own shade inside its folder\u2019s colour, from a hash of its path. Same file, same colour, every time.',
+  full: 'Colours, plus a silhouette, wall material, windows and a rooftop detail per file, all from a hash of its path. Footprint still follows lines, height follows complexity.',
+};
+/** Per-file looks: hashed colour, or the full hashed buildings. One state object, saved as one setting. */
+function buildingsSection() {
+  const b = state.bstyle, set = (patch, redraw = false) => { state.bstyle = normaliseStyle({ ...state.bstyle, ...patch }); ls.set('bstyle', state.bstyle); applyScene(); if (redraw) renderLayers(); };
+  const slider = (id, label, key, min, max, step, fmt) => {
+    const out = h('span', { class: 'rv' }, fmt(b[key]));
+    return h('label', { class: 'rng' }, h('span', null, label),
+      h('input', { type: 'range', id, min, max, step, value: b[key], 'aria-label': label, oninput: (e) => { out.textContent = fmt(Number(e.target.value)); set({ [key]: Number(e.target.value) }); } }), out);
+  };
+  const full = b.mode === 'full';
+  return h('div', { class: 'lyr', id: 'l-buildings' }, h('h3', null, 'BUILDINGS'),
+    h('div', { class: 'fl' }, h('span', null, 'Style'), seg(Object.entries(STYLE_MODES), b.mode, (v) => set({ mode: v }, true), 'Building style')),
+    h('small', null, BSTYLE_HELP[b.mode]),
+    b.mode === 'plain' ? null : [
+      slider('b-spread', 'Hue spread', 'spread', 0, 50, 1, (v) => `${v}\u00b0`),
+      full ? slider('b-dens', 'Window density', 'density', 0.6, 2, 0.1, (v) => `${v.toFixed(1)}x`) : null,
+      full ? slider('b-var', 'Shape variety', 'variety', 1, 7, 1, (v) => String(v)) : null,
+      full ? slider('b-height', 'Height boost', 'height', 1, 3, 0.1, (v) => `${v.toFixed(1)}x`) : null,
+      full ? toggle('Wall textures (brick, stone, steel)', b.texture, (v) => set({ texture: v }), 'l-texture') : null,
+      h('div', { class: 'act' }, h('button', { class: 'btn', id: 'b-shuffle', onclick: () => set({ salt: b.salt + 1 }, true) }, 'RESHUFFLE HASH'), h('small', null, b.salt ? `Shuffle ${b.salt}` : 'Original shuffle'))],
+    toggle('Show index codes (C-14)', b.codes, (v) => set({ codes: v }), 'l-codes'));
+}
 function renderLayers() {
   const box = $('layers'); if (box.hidden) return;
   const save = (k, v) => { state[k] = v; ls.set(k, v); applyScene(); renderLayers(); };
@@ -281,6 +309,7 @@ function renderLayers() {
       h('div', { class: 'fl' }, h('span', null, 'Height scale'), seg(Object.entries(SCALES).map(([k, v]) => [k, v.label.replace('Square root', 'Sqrt').replace('Logarithmic', 'Log')]), state.scale, (v) => save('scale', v), 'Height scale')),
       h('small', null, ticks.map((t) => `${t.lines} lines = ${t.height.toFixed(1)}`).join(' \u00b7 ')),
       h('div', { class: 'fl' }, h('span', null, 'Dotted lines'), seg([['selected', 'Selected PR'], ['all', 'All'], ['off', 'Off']], state.lines, (v) => save('lines', v), 'Dotted lines'))),
+    buildingsSection(),
     h('div', { class: 'lyr' }, h('h3', null, 'MAP'),
       toggle('Fog of war (dim idle files)', state.fog, (v) => save('fog', v), 'l-fog'),
       toggle('File names', state.labels, (v) => save('labels', v), 'l-labels'),
@@ -314,7 +343,7 @@ function openKey() {
       h('h3', null, 'FOCUSED PR'),
       h('ul', null, sw(DIFF_COLORS.add, 'Added lines, one block per hunk'), sw(DIFF_COLORS.del, 'Deleted lines, one block per hunk (slightly narrower)'), h('li', null, 'Block heights are proportional to line counts. Other PRs turn to glass.'), h('li', null, 'Moving dotted lines run from the flag to every file the PR touches.')),
       h('h3', null, 'FLAGS AND MARKERS'),
-      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status, the number is the PR number.'), h('li', null, 'Emblem on the flag corner = epic. The shape and hue come from the epic name, so every PR in one epic wears the same emblem. No emblem means no epic:'), h('ul', { class: 'sw2 emb' }, EMBLEMS.map((shape) => h('li', null, h('span', { class: 'em', 'data-shape': shape, style: '--eh:200' })))), h('li', null, 'Gold pulse around a flag = needs you.'), h('li', null, 'Layers > Raise flags by age lifts old PRs on taller poles, so the ones that have been open longest stand out. The number on a card (3d, 2w) is its age.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), sw('#4cc9f0', 'Cyan rim around a roof = a watch rule covers this file, so any PR that touches it is tracked. The WATCHING pill at the top lists your rules; a cyan tag on a card names the rule that tracked it.'), h('li', null, 'Fog of war dims files nobody is working on.')),
+      h('ul', null, h('li', null, 'Flag = one PR. Ring colour is status, fill is the author, the glyph repeats the status, the number is the PR number.'), h('li', null, 'Emblem on the flag corner = epic. The shape and hue come from the epic name, so every PR in one epic wears the same emblem. No emblem means no epic:'), h('ul', { class: 'sw2 emb' }, EMBLEMS.map((shape) => h('li', null, h('span', { class: 'em', 'data-shape': shape, style: '--eh:200' })))), h('li', null, 'Gold pulse around a flag = needs you.'), h('li', null, 'Layers > Raise flags by age lifts old PRs on taller poles, so the ones that have been open longest stand out. The number on a card (3d, 2w) is its age.'), sw('#ffb347', 'Amber rim around a roof = two or more PRs touch this file.'), sw('#4cc9f0', 'Cyan rim around a roof = a watch rule covers this file, so any PR that touches it is tracked. The WATCHING pill at the top lists your rules; a cyan tag on a card names the rule that tracked it.'), h('li', null, 'Fog of war dims files nobody is working on.'), h('li', null, 'Layers > Buildings: each file\u2019s shade, silhouette (block, stepped, crown, L, tower, terraced, twin towers), wall material (concrete, brick, stone, steel), windows (their size, how many are lit and their warm glow) and rooftop detail come from a hash of its path, so a file always looks the same and neighbours are easy to tell apart. Size still means what it did: footprint is lines of code (each building keeps a margin of its own inside its lot), height is complexity (times the Height boost). The code on a roof (C-14) is a short name for the file; say \u201clook at C-14\u201d. A rooftop antenna or tank disappears under a topper, so toppers stay the loudest thing on the map.')),
       h('h3', null, 'ALERTS (flag icon, top right)'),
       h('ul', null, h('li', null, 'Places where Jira and the PRs disagree: ticket Done but PR open, ticket To Do but PR up, ticket in review with no PR, PR with no ticket, unknown ticket key.'))));
 }
@@ -329,8 +358,8 @@ function onHover(hit, x, y) {
     fill(tip, h('b', null, pr?.ticketKey || hit.prId), ' ', pr?.title || '', h('br'), hit.path.split('/').pop(),
       hit.kind === 'add' ? h('span', { class: 'a' }, `  +${hit.n} added`) : hit.kind === 'del' ? h('span', { class: 'd' }, `  −${hit.n} deleted`) : '');
   } else {
-    const l = state.scene.layout().byPath.get(hit.path), touching = s.prs.filter((p) => p.files.some((f) => f.path === hit.path));
-    fill(tip, h('b', null, hit.path), h('br'), `${l.loc} LOC · complexity ${l.complexity}`, touching.length ? [h('br'), `${touching.length} open PR${touching.length > 1 ? 's' : ''}: ${touching.map((p) => p.ticketKey || p.id).join(', ')}`] : '');
+    const l = state.scene.layout().byPath.get(hit.path), bi = state.scene.buildingInfo(hit.path), touching = s.prs.filter((p) => p.files.some((f) => f.path === hit.path));
+    fill(tip, h('b', null, hit.path), h('br'), `${l.loc} LOC · complexity ${l.complexity}`, bi && state.bstyle.codes ? [h('br'), `${bi.code}${bi.shape !== 'block' ? ' · ' + bi.shape : ''}`] : '', touching.length ? [h('br'), `${touching.length} open PR${touching.length > 1 ? 's' : ''}: ${touching.map((p) => p.ticketKey || p.id).join(', ')}`] : '');
   }
   tip.style.left = Math.min(innerWidth - 310, x + 14) + 'px'; tip.style.top = Math.min(innerHeight - 90, y + 14) + 'px';
 }
@@ -567,7 +596,8 @@ function showFileBar(path) {
   const bar = $('filebar'), w = state.snap.watch, dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : null;
   const rule = (v) => w.rules.some((r) => r.type === 'path' && r.value === v);
   const toggleRule = (v) => async () => { await watchCall('POST', rule(v) ? '/api/watch/unrule' : '/api/watch/rule', { type: 'path', value: v }); showFileBar(path); };
-  fill(bar, h('b', null, path),
+  const bi = state.scene?.buildingInfo(path);
+  fill(bar, h('b', null, path), bi && state.bstyle.codes ? h('span', { class: 'bcode', title: 'Index code: a short name for this file' }, bi.code) : null,
     h('button', { class: 'btn', id: 'fb-file', onclick: toggleRule(path) }, rule(path) ? 'STOP WATCHING FILE' : 'WATCH FILE'),
     dir ? h('button', { class: 'btn', id: 'fb-dir', onclick: toggleRule(dir) }, rule(dir) ? 'STOP WATCHING FOLDER' : 'WATCH FOLDER') : null,
     h('button', { class: 'btn', 'aria-label': 'Close', onclick: () => { bar.hidden = true; } }, '✕'));

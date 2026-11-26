@@ -87,8 +87,10 @@ export function columnParts(entry, mode, focused) {
  * x/y is the centre of the topper's footprint, w/d its size, z0 the roof height it stands on.
  * topper 'share': footprint area follows the share of the file the PR changes.
  * topper 'slim':  small fixed-size columns in a grid, as before.
+ * roofs: optional Map(path -> {r: {x, y, w, h}, height}) overriding where a file's toppers stand; coverage still
+ * uses the file's lines of code.
  */
-export function planSpires({ byPath, prs, mode = 'sqrt', focusId = null, visible = null, topper = 'share' }) {
+export function planSpires({ byPath, prs, mode = 'sqrt', focusId = null, visible = null, topper = 'share', roofs = null }) {
   const perFile = new Map();
   for (const p of prs) {
     if (visible && !visible.has(p.id)) continue;
@@ -101,7 +103,9 @@ export function planSpires({ byPath, prs, mode = 'sqrt', focusId = null, visible
   const columns = [];
   for (const [path, entries] of perFile) {
     entries.sort((a, b) => (a.pr.id < b.pr.id ? -1 : 1));          // stable slots
-    const leaf = byPath.get(path);
+    // `roofs` (path -> {r, height}) says where toppers stand when a building is not a plain box: stepped, crown and L roofs.
+    const base = byPath.get(path), roof = roofs?.get(path);
+    const leaf = roof ? { ...base, r: roof.r, height: roof.height } : base;
     let boxes;
     if (topper === 'slim') {
       const slots = placeColumns(leaf.r, entries.length);

@@ -17,6 +17,7 @@ Needs Node 20+. `npm link` gives you a global `battlemap` command.
 ![Isometric overview](docs/screenshots/overview.png)
 
 * **Footprint** = lines of code. **Height** = complexity. **Colour** = top-level package. Same file list, same map, every time.
+* **Buildings.** Every file also gets a look of its own, derived from a hash of its path: a shade inside its folder's colour, a silhouette (block, stepped, crown, L-shape, tower on a podium, terraced slabs or twin towers), a wall material (concrete, brick, stone or steel), a window pattern with its own window size, share of lit windows and warm glow, and a rooftop detail (antenna, water tank, vents). Each building also keeps a margin of its own inside its lot, so there are gaps and a mix of widths, like blocks of a city. The same file always looks the same, so neighbours in one folder are easy to tell apart without reading labels, and the folder colour still reads from far away. A short **index code** on each roof (`C-14`) gives people a name to say out loud: "look at C-14". It also shows in the hover tip and the file bar. Footprint still follows lines of code and height still follows complexity.
 * **Toppers.** Each PR that touches a file raises a column on that roof. Its **width** is the share of the file the PR changes (at least 20%, so one-line edits still show), and two PRs on one file split the roof. Its **height** is lines changed (adds + dels) on one global scale, so any two toppers on the map compare by eye. Layers > Spires switches the height scale between square root (default), linear and log, and the width between "Share of file" and "Slim".
 * **Contested files** (two or more PRs) get a static amber frame around the roof.
 * **Focus a PR** (tap a card, flag or topper). Its columns split into hunks: red for deleted lines, green for added, heights proportional to lines. Every other PR turns to glass. Per-file `+n -n` floats over each topper and the left panel lists every file with a green/red bar. Moving dotted lines run from the flag to every file it touches.
@@ -30,7 +31,11 @@ Needs Node 20+. `npm link` gives you a global `battlemap` command.
 
 The three-sheets button in the corner opens the view and spire options: **2D**, **Isometric** (default) or **3D**; topper width and height scale; dotted lines for the selected PR, all PRs or none; fog of war, file names and PR flags.
 
+**Buildings** (Layers menu) has three styles: **Plain** (one shade per folder, as before), **Colours** (each file gets its own shade inside its folder's family) and **Buildings** (the default: colours, silhouettes, windows and rooftop details). Under it: *Hue spread* (how far shades wander from the folder colour, 0 to 50 degrees), *Window density*, *Shape variety* (1 gives plain boxes, 7 uses every silhouette), *Height boost* (one multiplier for every building, so tall still means complex), *Wall textures* (brick, stone and steel; off leaves plain walls), **Reshuffle hash** (a new shuffle re-rolls every file's look and index code) and *Show index codes*. The choices are saved in the browser. On a roof with a PR, toppers stand on the real roof (the top step, the crown, or the tall half of an L) and the rooftop detail is left off, so toppers stay the most visible thing on the map. Windows and wall textures are painted by a shader, anti-aliased, and fade to an average colour when too small to see, so they never shimmer and cost no extra draw calls. A window's size is rolled once per building and then tiles across each wall.
+
 ![Layers menu](docs/screenshots/layers.png)
+
+![Hashed buildings up close](docs/screenshots/buildings.png)
 
 ![3D view](docs/screenshots/3d.png)
 

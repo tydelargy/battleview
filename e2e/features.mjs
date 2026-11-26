@@ -265,6 +265,25 @@ try {
     await page.click('#f-clear'); await page.fill('#f-q', ''); await closePanel();
   });
 
+  await step('building styles: Plain, Colours and Buildings; reshuffle changes codes; saved across a reload; codes show in the file bar', async () => {
+    const info = () => page.evaluate(() => window.battlemap.state.scene.buildingInfo('apps/api/routes/auth.ts'));
+    await page.click('#layersBtn'); await page.waitForSelector('#l-buildings');
+    const style = (t) => page.locator('#l-buildings .seg button', { hasText: t });
+    assert.equal(await style('Buildings').getAttribute('aria-pressed'), 'true', 'the full style is the default');
+    const code = (await info()).code; assert.match(code, /^[A-Z]-\d\d$/);
+    await style('Plain').click(); assert.equal(await page.locator('#b-spread').count(), 0, 'plain has no tuning');
+    await style('Colours').click(); await page.waitForSelector('#b-spread'); assert.equal(await page.locator('#b-dens').count(), 0, 'windows only in the full style');
+    await style('Buildings').click(); await page.waitForSelector('#b-dens');
+    await page.click('#b-shuffle'); const after = (await info()).code; assert.notEqual(after, code, 'a new shuffle re-rolls the code');
+    await page.reload(); await page.waitForSelector('.card'); await page.waitForTimeout(1500);
+    assert.equal((await info()).code, after, 'the shuffle survives a reload');
+    await page.click('#layersBtn'); await page.waitForSelector('#l-buildings');
+    await page.locator('#l-buildings .seg button', { hasText: 'Plain' }).click();
+    assert.equal((await info()).shape, 'block', 'plain is all blocks');
+    await page.locator('#l-buildings .seg button', { hasText: 'Buildings' }).click();
+    await page.click('#layersBtn'); await page.waitForSelector('#layers', { state: 'hidden' });
+  });
+
   await step('no page errors', async () => assert.deepEqual(errors, [], `page errors: ${errors.join(' | ')}`));
 } finally { await browser.close(); srv.kill(); }
 for (const [s, n] of results) console.log(s, n);

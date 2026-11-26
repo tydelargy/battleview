@@ -5,13 +5,18 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildLayout, WORLD } from './layout.js';
 import { planSpires, DIFF_COLORS } from './spires.js';
 import { ageDays, ageLift } from './filters.js';
+import { buildingFor, DEFAULT_STYLE, SHAPES } from './building.js';
 
 const CX = WORLD.w / 2, CY = WORLD.h / 2;
 const FLAG_W = { collapsed: 78, expanded: 214 }, FLAG_H = 34;
 const SVGNS = 'http://www.w3.org/2000/svg';
 const ease = (t) => 1 - Math.pow(1 - t, 3);
-const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _v = new THREE.Vector3();
+const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _c = new THREE.Color(), _b = new THREE.Color(), _v = new THREE.Vector3();
 const QID = new THREE.Quaternion();
+// Per-instance data for the building shader (see the comment above WINDOW_VERT). Reused arrays: Pool.push copies them.
+const EX = { a: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], set(t, fogged) {
+  const [a, b, c] = this.a; a[0] = t.window; a[1] = t.lit; a[2] = t.hf % 65521; a[3] = fogged ? 0.25 : 1;   // which windows are lit never depends on fog, hover or selection; only how brightly they glow
+  b[0] = t.cell; b[1] = t.material; const k = fogged ? 0.6 : 1; c[0] = t.litRgb[0] * k; c[1] = t.litRgb[1] * k; c[2] = t.litRgb[2] * k; return this.a; } }, EX_NONE = [[-1, 0, 0, 0], [1, 0, 0, 0], [0, 0, 0, 0]];
 
 // Three ways to look at the map. Isometric and 2D use a very narrow field of view
 // from far away, which is visually parallel projection but keeps one camera type.
@@ -24,13 +29,14 @@ const rangeScale = (kind) => Math.tan((VIEWS['3d'].fov * Math.PI) / 360) / Math.
 
 /** A growable InstancedMesh with parallel metadata, so picks map back to PRs and files. */
 class Pool {
-  constructor(scene, geometry, material, { cast = false } = {}) {
-    this.scene = scene; this.geometry = geometry; this.material = material; this.cast = cast;
+  constructor(scene, geometry, material, { cast = false, attrs = [] } = {}) {
+    this.scene = scene; this.geometry = geometry; this.material = material; this.cast = cast; this.attrs = attrs; this.extra = [];
     this.cap = 0; this.n = 0; this.meta = []; this.mesh = null; this.alloc(512);
   }
   alloc(cap) {
     if (this.mesh) { this.scene.remove(this.mesh); this.mesh.dispose(); }
     this.cap = cap;
+    this.extra = this.attrs.map((name) => { const a = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4); a.setUsage(THREE.DynamicDrawUsage); this.geometry.setAttribute(name, a); return a; });
     const mesh = new THREE.InstancedMesh(this.geometry, this.material, cap);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false; mesh.castShadow = this.cast; mesh.receiveShadow = true; mesh.count = 0;
@@ -38,8 +44,9 @@ class Pool {
     this.mesh = mesh; this.scene.add(mesh);
   }
   begin(expected) { if (expected > this.cap) this.alloc(Math.ceil(expected * 1.5)); this.n = 0; this.meta.length = 0; }
-  push(pos, scale, color, meta) {
+  push(pos, scale, color, meta, extra) {
     const i = this.n++;
+    if (extra) extra.forEach((v, k) => this.extra[k].array.set(v, i * 4));
     _m.compose(pos, QID, scale);
     this.mesh.setMatrixAt(i, _m);
     this.mesh.setColorAt(i, color);
@@ -49,8 +56,105 @@ class Pool {
     this.mesh.count = this.n;
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    for (const a of this.extra) a.needsUpdate = true;
     this.mesh.boundingSphere = null;       // so raycasts see the new instances
   }
+}
+
+// Walls and windows are painted by the building material, not by meshes: each instance carries a few vec4s
+//   aWin  = (window style or -1, lit fraction, seed, glow)   aWin2 = (window cell size, wall material, 0, 0)   aLit = lit window colour
+// and the fragment shader cuts each facade into a whole number of cells from the box's world size, so a block costs
+// the same as a wall and windows tile whatever the building's size. Everything is anti-aliased and fades to an average
+// colour when a cell is smaller than a couple of pixels, so nothing shimmers when you zoom or orbit.
+const WINDOW_VERT = `
+attribute vec4 aWin; attribute vec4 aWin2; attribute vec4 aLit;
+flat varying vec4 vWin; flat varying vec4 vWin2; flat varying vec4 vLit; varying vec3 vObj; flat varying vec3 vNrm; flat varying vec3 vDim;`;
+const WINDOW_VERT_BODY = `
+  vWin = aWin; vWin2 = aWin2; vLit = aLit; vObj = position; vNrm = normal;
+  #ifdef USE_INSTANCING
+  vDim = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+  #else
+  vDim = vec3(1.0);
+  #endif`;
+const WINDOW_FRAG = `
+uniform float uDens; uniform float uTex;
+flat varying vec4 vWin; flat varying vec4 vWin2; flat varying vec4 vLit; varying vec3 vObj; flat varying vec3 vNrm; flat varying vec3 vDim;
+float winRnd(float seed, float k) {
+  uint x = (uint(seed + 0.5) * 2654435761u) ^ (uint(abs(k) + 0.5) * 2654435769u);
+  x ^= x >> 16; x *= 2246822507u; x ^= x >> 13; x *= 3266489909u; x ^= x >> 16;
+  return float(x) / 4294967296.0;
+}
+// coverage of [a, b] at x for a pixel that spans w (box filter), so edges are smooth instead of stair-stepped
+float span(float x, float a, float b, float w) { w = max(w, 1e-4); return clamp((x - a) / w + 0.5, 0.0, 1.0) * clamp((b - x) / w + 0.5, 0.0, 1.0); }`;
+const WINDOW_FRAG_BODY = `
+  #include <color_fragment>
+  float winGlow = 0.0;
+  // Everything that needs screen-space derivatives is computed here, before any branch: fwidth() inside a branch that
+  // neighbouring pixels do not all take is undefined, which shows up as pixels that change from frame to frame.
+  vec3 an = abs(vNrm);
+  bool spanX = an.z > an.x;
+  float lu = spanX ? vDim.x : vDim.z, lh = vDim.y;
+  float u = (spanX ? vObj.x : vObj.z) + 0.5, v = vObj.y;
+  float wu = u * lu, wv = v * lh;                           // world units across and up the wall
+  float dwu = fwidth(wu), dwv = fwidth(wv);                 // how many world units one pixel covers
+  if (vWin.x > -0.5) {
+    if (an.y < 0.5) {
+      float face = spanX ? (vNrm.z > 0.0 ? 1.0 : 2.0) : (vNrm.x > 0.0 ? 3.0 : 4.0);
+      vec3 base = diffuseColor.rgb, wall = base;
+      // ---- wall material: brick, stone, steel (concrete is the plain colour) ----
+      float mat = vWin2.y;
+      if (uTex > 0.5 && mat > 0.5) {
+        if (mat < 1.5) {                                    // brick: running bond
+          float rows = wv / 1.5, row = floor(rows), x = wu / 3.6 + mod(row, 2.0) * 0.5, fx = fract(x), fy = fract(rows);
+          float dx = dwu / 3.6, dy = dwv / 1.5, px = max(dx, dy), body = span(fx, 0.04, 0.96, dx) * span(fy, 0.1, 0.92, dy);
+          float tint = 0.9 + 0.2 * winRnd(vWin.z, row * 53.0 + floor(x) * 17.0 + 5.0);
+          vec3 brick = wall * vec3(1.25, 0.85, 0.72) * tint, mortar = wall * 0.62 + 0.07;
+          vec3 near = mix(mortar, brick, body), far = brick * 0.93 + mortar * 0.07;
+          wall = mix(near, far, smoothstep(0.15, 0.4, px));
+        } else if (mat < 2.5) {                             // stone: big blocks with their own tone
+          float rows = wv / 2.8, row = floor(rows), x = wu / 5.5 + winRnd(vWin.z, row + 90.0), fx = fract(x), fy = fract(rows);
+          float dx = dwu / 5.5, dy = dwv / 2.8, px = max(dx, dy), body = span(fx, 0.03, 0.97, dx) * span(fy, 0.05, 0.95, dy);
+          float tint = 0.82 + 0.3 * winRnd(vWin.z, row * 31.0 + floor(x) * 13.0 + 11.0);
+          vec3 block = mix(wall, vec3(dot(wall, vec3(0.3, 0.59, 0.11))), 0.55) * 1.12 * tint + 0.03, joint = wall * 0.5;
+          vec3 near = mix(joint, block, body), far = block * 0.96 + joint * 0.04;
+          wall = mix(near, far, smoothstep(0.15, 0.4, px));
+        } else {                                            // steel: tall panels with seams and a faint sheen
+          float x = wu / 2.6, fx = fract(x), rows = wv / 9.0, fy = fract(rows);
+          float dx = dwu / 2.6, dy = dwv / 9.0, px = max(dx, dy), body = span(fx, 0.04, 0.96, dx) * span(fy, 0.015, 1.0, dy);
+          float tint = 0.96 + 0.08 * winRnd(vWin.z, floor(x) * 7.0 + 3.0);
+          vec3 panel = wall * vec3(0.82, 0.96, 1.22) * tint * (1.0 + 0.12 * v), seam = wall * 0.55;
+          vec3 near = mix(seam, panel, body), far = panel * 0.97 + seam * 0.03;
+          wall = mix(near, far, smoothstep(0.15, 0.4, px));
+        }
+      }
+      // ---- windows: a whole number of cells per face, so they tile whatever the size ----
+      float cell = vWin2.x / uDens, nc, nr, u0 = 0.2, u1 = 0.8, v0 = 0.25, v1 = 0.7;
+      if (vWin.x < 0.5) { nc = max(1.0, floor(lu / cell + 0.5)); nr = max(1.0, floor(lh / cell + 0.5)); }
+      else if (vWin.x < 1.5) { nc = 1.0; nr = max(1.0, floor(lh / (cell * 1.5) + 0.5)); u0 = 0.07; u1 = 0.93; }
+      else { nc = max(1.0, floor(lu / (cell * 1.1) + 0.5)); nr = 1.0; v0 = 0.1; v1 = 0.88; }
+      float fu = u * nc, fv = v * nr, wpx = dwu * nc / lu, hpx = dwv * nr / lh;
+      float i = min(floor(fu), nc - 1.0), j = min(floor(fv), nr - 1.0);
+      float cu = fu - i, cv = fv - j;
+      float cover = span(cu, u0, u1, wpx) * span(cv, v0, v1, hpx);
+      float fade = 1.0 - smoothstep(0.1, 0.3, max(wpx, hpx));   // cells under about three pixels become their average
+      bool on = winRnd(vWin.z, face * 1000.0 + i * 31.0 + j * 7.0 + 200.0) < vWin.y;
+      vec3 dark = base * vec3(0.38, 0.42, 0.52), lit = vLit.rgb;   // unlit glass is its own colour: nothing of the wall texture shows through
+      float wf = (u1 - u0) * (v1 - v0);
+      vec3 near = mix(wall, on ? lit : dark, cover);
+      vec3 far = mix(wall, mix(dark, lit, vWin.y), wf);
+      diffuseColor.rgb = mix(far, near, fade);
+      winGlow = mix(vWin.w * vWin.y * wf, on ? vWin.w * cover : 0.0, fade);
+    }
+  }`;
+function windowMaterial(uDens, uTex) {
+  const m = new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0.05 });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uDens = uDens; sh.uniforms.uTex = uTex;
+    sh.vertexShader = sh.vertexShader.replace('void main() {', WINDOW_VERT + '\nvoid main() {').replace('#include <begin_vertex>', '#include <begin_vertex>' + WINDOW_VERT_BODY);
+    sh.fragmentShader = sh.fragmentShader.replace('void main() {', WINDOW_FRAG + '\nvoid main() {').replace('#include <color_fragment>', WINDOW_FRAG_BODY)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += vLit.rgb * winGlow * 0.32;');
+  };
+  return m;
 }
 
 export function createScene(host, handlers = {}) {
@@ -95,7 +199,8 @@ export function createScene(host, handlers = {}) {
   const solid = () => new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.12, emissive: 0x1a1a1a });
   const glassMat = () => new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.0, transparent: true, opacity: 0.24, depthWrite: false });
   const plateMesh = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ roughness: 0.95 }));
-  const buildings = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0.05 }), { cast: true });
+  const uDens = { value: DEFAULT_STYLE.density }, uTex = { value: 1 };
+  const buildings = new Pool(scene, unitBox.clone(), windowMaterial(uDens, uTex), { cast: true, attrs: ['aWin', 'aWin2', 'aLit'] });
   const rims = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ color: 0xffb347, roughness: 0.6, emissive: 0x3a2400 }));
   // Cyan frame on every file a path rule covers, so what you are watching stays visible even with no PR on it.
   const watchRims = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ color: 0x4cc9f0, roughness: 0.4, emissive: 0x1f7a9e }));
@@ -123,6 +228,7 @@ export function createScene(host, handlers = {}) {
   const S = {
     layout: null, filesKey: '', prs: [], opts: { mode: 'sqrt', topper: 'share', focusId: null, visible: null, fog: true, statusColors: {}, view: '3d' },
     ui: { labels: true, flags: true, lines: 'selected', watched: true }, watched: new Set(),
+    style: { ...DEFAULT_STYLE }, styled: new Map(), occupied: new Set(),
     columns: [], growth: { t0: 0, dur: 520, active: false, p: 1 }, flags: new Map(), hover: null, highlight: new Set(), touched: new Set(), contested: new Set(), tween: null, size: { w: 1, h: 1 }, focusLabels: [],
   };
 
@@ -138,6 +244,7 @@ export function createScene(host, handlers = {}) {
     for (const f of files) { const t = f.path + ':' + f.loc + ':' + (f.complexity ?? 0); for (let i = 0; i < t.length; i++) { hsh ^= t.charCodeAt(i); hsh = Math.imul(hsh, 16777619); } }
     const key = files.length + ':' + (hsh >>> 0);
     S.layout = buildLayout(files);
+    restyle();
     if (key === S.filesKey) { refreshBuildings(); drawWatch(); return; }
     S.filesKey = key;
     const L = S.layout;
@@ -151,16 +258,40 @@ export function createScene(host, handlers = {}) {
     refreshBuildings(); drawWatch();
   }
 
+  // ---- building style (hashed looks; see web/building.js) ----
+  // Which boxes and roof each file gets. Roofs matter outside this file too: toppers and rims stand on them.
+  function restyle() {
+    S.styled = new Map();
+    for (const l of S.layout?.leaves || []) S.styled.set(l.path, buildingFor(l, S.style, { gear: !S.occupied.has(l.path) }));
+  }
+  const roofOf = (l) => { const b = S.styled.get(l.path); const r = b ? b.roof : { ...l.r, z: l.height }; return { cx: r.x + r.w / 2, cy: r.y + r.h / 2, w: r.w, h: r.h, top: r.z }; };
+  const roofMap = () => new Map([...S.styled].map(([path, b]) => [path, { r: b.roof, height: b.roof.z }]));
+  function setStyle(next) {
+    const st = { ...S.style, ...next }, geometry = st.mode !== S.style.mode || st.spread !== S.style.spread || st.variety !== S.style.variety || st.salt !== S.style.salt || st.height !== S.style.height;
+    S.style = st; uDens.value = st.density; uTex.value = st.texture ? 1 : 0;
+    if (!S.layout) return;
+    if (geometry) { restyle(); setPRs(S.prs, {}); drawWatch(); } else refreshBuildings();
+  }
+
   const statusColor = (st) => S.opts.statusColors[st] || '#8792a2';
   function refreshBuildings() {
     const L = S.layout; if (!L) return;
-    buildings.begin(L.leaves.length);
+    const full = S.style.mode === 'full', hashed = S.style.mode !== 'plain';
+    buildings.begin(L.leaves.length * (full ? 6 : 1));
     L.leaves.forEach((l, i) => {
       const touched = S.touched.has(l.path), lit = S.highlight.has(l.path) || (S.hover && S.hover.path === l.path);
-      const jitter = ((i * 2654435761) % 1000) / 1000;
       const fogged = S.opts.fog && !touched && !lit;
-      _c.setHSL(l.hue / 360, fogged ? 0.14 : 0.42, (fogged ? 0.21 : 0.33) + jitter * 0.06 + (lit ? 0.22 : 0));
-      buildings.push(_p.set(l.mx - CX, 0, l.my - CY), _s.set(l.r.w, l.height, l.r.h), _c, l);
+      const b = S.styled.get(l.path), t = b?.t;
+      // plain: the folder hue with a little jitter. hashed: this file's own hue, saturation and lightness inside the folder's family.
+      if (!hashed) { const jitter = ((i * 2654435761) % 1000) / 1000; _c.setHSL(l.hue / 360, fogged ? 0.14 : 0.42, (fogged ? 0.21 : 0.33) + jitter * 0.06 + (lit ? 0.22 : 0)); }
+      else if (fogged) _c.setHSL(t.hue / 360, 0.12 + ((t.sat - 48) / 14) * 0.1, 0.16 + ((t.light - 40) / 14) * 0.1);   // dim, but still this file's own shade
+      else _c.setHSL(t.hue / 360, t.sat / 100 * 0.8, (t.light - 8) / 100 + (lit ? 0.22 : 0));
+      _b.copy(_c);
+      for (const part of b.parts) {
+        const col = _c.copy(_b); if (part.dl) col.offsetHSL(0, 0, part.dl / 100);
+        buildings.push(_p.set(part.x + part.w / 2 - CX, part.z, part.y + part.d / 2 - CY), _s.set(part.w, part.h, part.d), col, l,
+          full && !part.gear ? EX.set(t, fogged) : EX_NONE);
+      }
     });
     buildings.end();
   }
@@ -169,7 +300,7 @@ export function createScene(host, handlers = {}) {
     const L = S.layout, shown = S.ui.watched && L ? [...S.watched].filter((p) => L.byPath.has(p)) : [];
     watchRims.begin(shown.length * 4);
     for (const path of shown) {
-      const l = L.byPath.get(path), r = l.r, t = 0.75, y = l.height - 0.3, x = l.mx - CX, z = l.my - CY;
+      const r = roofOf(L.byPath.get(path)), t = 0.75, y = r.top - 0.3, x = r.cx - CX, z = r.cy - CY;
       watchRims.push(_p.set(x, y, z - r.h / 2 - t / 2), _s.set(r.w + t * 2, 0.9, t), _c.set(0xffffff), { path });
       watchRims.push(_p.set(x, y, z + r.h / 2 + t / 2), _s.set(r.w + t * 2, 0.9, t), _c, { path });
       watchRims.push(_p.set(x - r.w / 2 - t / 2, y, z), _s.set(t, 0.9, r.h), _c, { path });
@@ -184,7 +315,10 @@ export function createScene(host, handlers = {}) {
     const next = { ...S.opts, ...opts };
     const regrow = (next.focusId ?? null) !== (S.opts.focusId ?? null) || next.mode !== S.opts.mode || next.topper !== S.opts.topper;
     S.prs = prs; S.opts = next;
-    S.columns = S.layout ? planSpires({ byPath: S.layout.byPath, prs, mode: S.opts.mode, focusId: S.opts.focusId, visible: S.opts.visible, topper: S.opts.topper }) : [];
+    S.columns = S.layout ? planSpires({ byPath: S.layout.byPath, prs, mode: S.opts.mode, focusId: S.opts.focusId, visible: S.opts.visible, topper: S.opts.topper, roofs: roofMap() }) : [];
+    // roof gear (antennas, tanks) would poke through toppers, so buildings that carry a PR keep a clear roof
+    const occ = new Set(S.columns.map((c) => c.path));
+    if (occ.size !== S.occupied.size || [...occ].some((p) => !S.occupied.has(p))) { S.occupied = occ; restyle(); }
     S.touched = new Set(S.columns.filter((c) => !c.dimmed || !S.opts.focusId).map((c) => c.path));
     S.contested = new Set(S.columns.filter((c) => c.sharedWith > 0 && !c.dimmed).map((c) => c.path));
     refreshBuildings();
@@ -214,7 +348,7 @@ export function createScene(host, handlers = {}) {
     // Amber frame around any roof that two or more PRs share. Static on purpose.
     rims.begin(S.contested.size * 4);
     for (const path of S.contested) {
-      const l = S.layout.byPath.get(path), r = l.r, t = 0.55, y = l.height - 0.3, x = l.mx - CX, z = l.my - CY;
+      const r = roofOf(S.layout.byPath.get(path)), t = 0.55, y = r.top - 0.3, x = r.cx - CX, z = r.cy - CY;
       rims.push(_p.set(x, y, z - r.h / 2 - t / 2), _s.set(r.w + t * 2, 0.75, t), _c.set(0xffffff), { path });
       rims.push(_p.set(x, y, z + r.h / 2 + t / 2), _s.set(r.w + t * 2, 0.75, t), _c, { path });
       rims.push(_p.set(x - r.w / 2 - t / 2, y, z), _s.set(t, 0.75, r.h), _c, { path });
@@ -278,9 +412,9 @@ export function createScene(host, handlers = {}) {
       cand.sort((a, b) => b.d - a.d);
       for (const { l, hot } of cand) {
         if (n >= fileLabels.length) break;
-        const a = project(l.mx, l.r.y + l.r.h, hot ? 0.6 : l.height + 0.2);
+        const a = project(l.mx, l.r.y + l.r.h, hot ? 0.6 : roofOf(l).top + 0.2);
         if (!a.vis || a.sx < -80 || a.sx > w + 80 || a.sy < -20 || a.sy > h + 20) continue;
-        const el = fileLabels[n++]; el.textContent = l.name; el.classList.toggle('hot', hot);
+        const el = fileLabels[n++]; el.textContent = S.style.codes ? `${l.name} \u00b7 ${S.styled.get(l.path).t.code}` : l.name; el.classList.toggle('hot', hot);
         place(el, a.sx, a.sy, '-50%', '0');
       }
     }
@@ -375,7 +509,7 @@ export function createScene(host, handlers = {}) {
     const r = Math.max(26, Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2 + 18);
     flyTo(cx, cy, Math.max(...cols.map((c) => c.z0 + c.total)) / 2, r);
   }
-  function flyToFile(path) { const l = S.layout?.byPath.get(path); if (l) flyTo(l.mx, l.my, l.height / 2, Math.max(22, Math.hypot(l.r.w, l.r.h) / 2 + 14)); }
+  function flyToFile(path) { const l = S.layout?.byPath.get(path); if (l) flyTo(l.mx, l.my, roofOf(l).top / 2, Math.max(22, Math.hypot(l.r.w, l.r.h) / 2 + 14)); }
   function setView(kind, { instant = false } = {}) {
     if (!VIEWS[kind]) return;
     const t = controls.target, cur = Math.sin((camera.fov * Math.PI) / 360);
@@ -439,12 +573,14 @@ export function createScene(host, handlers = {}) {
   requestAnimationFrame(frame);
 
   return {
-    setFiles, setPRs, flyHome, flyToPR, flyToFile, setView,
+    setFiles, setPRs, setStyle, flyHome, flyToPR, flyToFile, setView,
     setUI(u) { const was = S.ui.watched; S.ui = { ...S.ui, ...u }; if (S.ui.watched !== was) drawWatch(); },
     setWatched(paths) { S.watched = new Set(paths || []); drawWatch(); },
     setHighlight(paths) { S.highlight = new Set(paths || []); refreshBuildings(); },
     info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov }),
     layout: () => S.layout,
+    /** Hash identity of one file: its index code, silhouette and window style. */
+    buildingInfo(path) { const b = S.styled.get(path); return b ? { code: b.t.code, shape: S.style.mode === 'full' ? SHAPES[b.t.shape] : 'block', parts: b.parts.length } : null; },
     flagHeights: () => Object.fromEntries([...S.flags].map(([id, f]) => [id, f.top])),
     dispose() { running = false; renderer.dispose(); host.removeChild(renderer.domElement); host.removeChild(overlay); },
   };

@@ -30,7 +30,8 @@ export class PerspectiveCamera { constructor(fov){this.fov=fov;this.position=new
 export class HemisphereLight {}
 export class DirectionalLight { constructor(){this.position=new Vector3();this.shadow={mapSize:{set(){}},camera:{}}} }
 export class PlaneGeometry {} export class GridHelper { constructor(){this.position=new Vector3()} }
-export class BoxGeometry { translate(){return this} } export class ConeGeometry { translate(){return this} rotateY(){return this} }
+export class BoxGeometry { translate(){return this} clone(){return new BoxGeometry()} setAttribute(n,a){(this.attrs ||= {})[n]=a} }
+export class InstancedBufferAttribute { constructor(a,n){this.array=a;this.itemSize=n} setUsage(){} } export class ConeGeometry { translate(){return this} rotateY(){return this} }
 export class MeshStandardMaterial { constructor(o){Object.assign(this,o)} }
 export class Mesh { constructor(g,m){this.geometry=g;this.material=m;this.rotation={};this.position=new Vector3()} }
 export class InstancedMesh { constructor(g,m,cap){ this.geometry=g;this.material=m;this.cap=cap;this.count=0;this.mats=[];this.cols=[];this.instanceColor=null;this.instanceMatrix={setUsage(){}};this.userData={}; (globalThis.__meshes ||= []).push(this) }
@@ -55,7 +56,7 @@ test('scene wiring with a stand-in three', async () => {
   const tdir = path.join(dir, 'node_modules/three'); fs.mkdirSync(path.join(tdir, 'examples/jsm/controls'), { recursive: true });
   fs.writeFileSync(path.join(tdir, 'package.json'), JSON.stringify({ name: 'three', type: 'module', exports: { '.': './index.js', './addons/*': './examples/jsm/*' } }));
   fs.writeFileSync(path.join(tdir, 'index.js'), FAKE_THREE); fs.writeFileSync(path.join(tdir, 'examples/jsm/controls/OrbitControls.js'), FAKE_ORBIT);
-  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
+  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js', 'building.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
   fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
 
   const frames = []; globalThis.requestAnimationFrame = (f) => { frames.push(f); return frames.length; };
@@ -80,6 +81,32 @@ test('scene wiring with a stand-in three', async () => {
   assert.equal(count('BoxGeometry', false) >= nCols, true);        // buildings + plates + spires, all solid
   assert.equal(count('ConeGeometry', false), nCols, 'one cap per column');
   assert.equal(count('ConeGeometry', true), 0);
+
+  // building style: plain is one box per file; the full style adds silhouettes and roof gear; toppers follow the roofs
+  const bld = () => meshes().find((m) => m.geometry.attrs?.aWin);
+  const winAttr = () => bld().geometry.attrs.aWin.array;
+  sc.setStyle({ mode: 'plain' }); assert.equal(bld().count, files.length, 'plain: one box per file');
+  assert.equal(winAttr()[0], -1, 'plain has no windows');
+  sc.setStyle({ mode: 'colors' }); assert.equal(bld().count, files.length);
+  sc.setStyle({ mode: 'full', variety: 1, salt: 0 });
+  const plainBoxes = bld().count; assert.ok(plainBoxes >= files.length && plainBoxes <= files.length * 2, 'variety 1: plain boxes, plus roof gear');
+  sc.setStyle({ variety: 4 }); const four = bld().count; sc.setStyle({ variety: 7 }); assert.ok(bld().count >= four, 'more silhouettes, more parts');
+  sc.setStyle({ variety: 7 }); assert.ok(bld().count > plainBoxes, 'silhouettes add parts');
+  sc.setStyle({ height: 2.5 }); sc.setStyle({ height: 1.5 });
+  assert.ok(Array.from({ length: bld().count }, (_, i) => winAttr()[i * 4]).some((w) => w >= 0), 'facades get a window style');
+  const info = sc.buildingInfo('packages/core/domain/pricing.ts'); assert.match(info.code, /^[A-Z]-\d\d$/);
+  // which windows are lit is part of a building's identity: hover, highlight and fog must not change it
+  const litPattern = () => Array.from({ length: bld().count }, (_, i) => [winAttr()[i * 4], winAttr()[i * 4 + 1], winAttr()[i * 4 + 2]].join()).join('|');
+  const before = litPattern();
+  sc.setHighlight(['packages/core/domain/pricing.ts']); assert.equal(litPattern(), before, 'highlight leaves the lit windows alone');
+  sc.setHighlight([]); sc.setPRs(prs, { mode: 'sqrt', focusId: '#2291', visible: null, fog: false, statusColors: {} }); assert.equal(litPattern(), before, 'so do focus and fog');
+  sc.setPRs(prs, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} });
+  sc.setStyle({ salt: 1 }); assert.notEqual(sc.buildingInfo('packages/core/domain/pricing.ts').code, info.code, 'a new salt reshuffles');
+  sc.setStyle({ salt: 0 }); assert.equal(sc.buildingInfo('packages/core/domain/pricing.ts').code, info.code, 'and the old one brings it back');
+  assert.equal(sc.buildingInfo('no/such'), null);
+  sc.setStyle({ density: 1.6 }); sc.setStyle({ mode: 'full', variety: 4, salt: 0 });
+  sc.setPRs(prs, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} });
+  assert.equal(sc.info().columns, nCols, 'every topper still finds a roof');
 
   // focus: the focused PR's columns become hunk stacks, everything else turns to glass
   const focus = prs.find((p) => p.id === '#2291');
