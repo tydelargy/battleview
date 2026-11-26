@@ -285,7 +285,7 @@ try {
     const focus = (t) => page.locator('#l-buildings .seg[aria-label="Focused PR diff style"] button', { hasText: t });
     await page.waitForSelector('#l-buildings');   // the panel is still open from the steps above
     assert.equal(await focus('Crates').getAttribute('aria-pressed'), 'true', 'crates by default');
-    for (const t of ['File', 'Frames', 'Facade', 'Hunks', 'Crates']) { await focus(t).click(); assert.equal(await focus(t).getAttribute('aria-pressed'), 'true', t); await page.waitForTimeout(150); }
+    for (const t of ['File', 'Facade', 'Hunks', 'Crates']) { await focus(t).click(); assert.equal(await focus(t).getAttribute('aria-pressed'), 'true', t); await page.waitForTimeout(150); }
     await focus('File').click(); await page.reload(); await page.waitForSelector('.card'); await page.waitForTimeout(1200);
     await page.click('#layersBtn'); await page.waitForSelector('#l-buildings');
     assert.equal(await focus('File').getAttribute('aria-pressed'), 'true', 'the choice survives a reload');

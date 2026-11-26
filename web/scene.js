@@ -408,9 +408,8 @@ export function createScene(host, handlers = {}) {
       const bp = c.dimmed ? gBoxes : boxes, cp = c.dimmed ? gCaps : caps;
       const meta = { prId: c.prId, path: c.path, lines: c.lines, pct: c.pct, add: c.add, del: c.del };
       for (const part of c.parts) {
-        const f = part.kind === 'del' ? 0.86 : 1;
         const col = part.kind === 'add' ? _c.set(DIFF_COLORS.add) : part.kind === 'del' ? _c.set(DIFF_COLORS.del) : _c.copy(st);
-        bp.push(_p.set(c.x - CX, c.z0 + part.dz * p, c.y - CY), _s.set(c.w * f, Math.max(0.02, part.h * p), c.d * f), col, { ...meta, kind: part.kind, n: part.n });
+        bp.push(_p.set(c.x - CX, c.z0 + part.dz * p, c.y - CY), _s.set(c.w, Math.max(0.02, part.h * p), c.d), col, { ...meta, kind: part.kind, n: part.n });   // red and green share one footprint: a narrower red hides inside the green
       }
       cp.push(_p.set(c.x - CX, c.z0 + c.total * p, c.y - CY), _s.set(c.w * 0.7071, Math.max(0.02, capHeight(c) * p), c.d * 0.7071), _c.copy(st).offsetHSL(0, 0, 0.07), { ...meta, kind: 'cap' });
     }

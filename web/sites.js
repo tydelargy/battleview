@@ -104,9 +104,8 @@ const floorsFor = (n, heightOf) => (n > 0 ? clamp(Math.round(heightOf(n) / FLOOR
  *              hunks as taped floors on the roof, each hunk as many floors as its lines need
  * So height always reads in lines: adds on the crane or scaffold, deletes on the floors, one scale for both.
  */
-export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = 'side' } = {}) {
+export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = 'crates' } = {}) {
   const slot = { x: col.x, y: col.y, w: col.w, d: col.d }, parts = [];
-  if (col.focused && focusStyle === 'side') return sideBySide(col, slot, heightOf);
   if (col.focused && focusStyle === 'lines' && shell) return lineBands(col, shell);
   if (col.focused && focusStyle === 'crates') return crates(col, slot, heightOf);
   const delHunks = col.parts.filter((p) => p.kind === 'del').map((p) => p.n);
@@ -123,26 +122,12 @@ export function siteParts(col, shell, { heightOf = defaultHeight, focusStyle = '
   return { parts, top };
 }
 
-/**
- * A focused PR, the two halves of the change standing next to each other on the roof: additions as a scaffold tower on
- * the left, deletions as a taped-floor tower on the right. Same footprint, same baseline, same level height (FLOOR_H),
- * and each side is as many levels as its lines need on the one diff scale, so "how much added against how much deleted"
- * is two stacks you can count. The sides are fixed (adds left, deletes right, along the longer side of the slot), and
- * a side with nothing in it is just its flat pad, so an absence is visible too.
- */
+/** The two halves of a roof slot, side by side along its longer side: additions on the first, deletions on the second. */
 const PAD = 0.2;                                          // the flat pad under a focused side
 function halves(slot) {
   const longX = slot.w >= slot.d, gap = Math.min(1, Math.max(0.6, (longX ? slot.w : slot.d) * 0.08)), half = ((longX ? slot.w : slot.d) - gap) / 2;
   return longX ? [{ ...slot, x: slot.x - (half + gap) / 2, w: half }, { ...slot, x: slot.x + (half + gap) / 2, w: half }]
     : [{ ...slot, y: slot.y - (half + gap) / 2, d: half }, { ...slot, y: slot.y + (half + gap) / 2, d: half }];
-}
-function sideBySide(col, slot, heightOf) {
-  const [a, b] = halves(slot), parts = [], na = col.add > 0 ? floorsFor(col.add, heightOf) : 0, nd = col.del > 0 ? floorsFor(col.del, heightOf) : 0;
-  const z = col.z0 + PAD;                                  // both stacks stand on their pad, never in its plane
-  parts.push({ x: a.x, y: a.y, w: a.w, d: a.d, z: col.z0, h: PAD, tone: 'addPad' }, { x: b.x, y: b.y, w: b.w, d: b.d, z: col.z0, h: PAD, tone: 'delPad' });
-  if (na) parts.push(...scaffoldParts({ x: a.x - a.w / 2, y: a.y - a.d / 2, w: a.w, h: a.d }, na * FLOOR_H, { pad: 0, lift: FLOOR_H, z0: z, ground: false, t: clamp(Math.min(a.w, a.d) * 0.06, 0.2, 0.5), braces: na, maxPoles: 12 }));
-  for (let i = 0; i < nd; i++) parts.push(...tapeFloor(b, z + i * FLOOR_H, FLOOR_H));
-  return { parts, top: z + Math.max(na, nd, 1) * FLOOR_H };
 }
 
 /**
@@ -193,9 +178,9 @@ export function lineBands(col, shell) {
 const jitter = (a, b, c) => { let h = (Math.imul(a + 1, 73856093) ^ Math.imul(b + 1, 19349663) ^ Math.imul(c + 1, 83492791)) >>> 0; h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0; return (h ^ (h >>> 13)) % 1000 / 1000; };
 
 /**
- * The side-by-side view as a building site's yard instead of empty frames. Same layout and the same sizing rule
- * (a level is FLOOR_H, and each side is as many levels as its lines need on the one diff scale): additions are
- * crates delivered, a solid stack on a pallet on the left; deletions are debris hauled away, a rubble heap in a
+ * A focused PR as a building site's yard on the roof: additions on the left, deletions on the right, same footprint
+ * and the same sizing rule (a level is FLOOR_H, and each side is as many levels as its lines need on the one diff
+ * scale): additions are crates delivered, a solid stack on a pallet on the left; deletions are debris hauled away, a rubble heap in a
  * red skip on the right, as tall as the stack beside it. Stacks are solid, so the volumes read, not just the lines.
  */
 function crates(col, slot, heightOf) {

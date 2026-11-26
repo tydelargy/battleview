@@ -5,7 +5,7 @@
 import { hash } from './layout.js';
 
 /** How a focused PR's change is drawn on the map. 'hunks' is the classic stack of green and red hunks. */
-export const FOCUS_VIEWS = ['hunks', 'lines', 'crates', 'side', 'facade'];
+export const FOCUS_VIEWS = ['hunks', 'lines', 'crates', 'facade'];
 export const focusView = (style) => style.focus || (style.mode === 'full' ? 'crates' : 'hunks');
 export const SHAPES = ['block', 'stepped', 'crown', 'L-shape', 'tower', 'terraced', 'twin towers'];
 export const MATERIALS = ['concrete', 'brick', 'stone', 'steel'];
