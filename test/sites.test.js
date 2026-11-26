@@ -124,12 +124,27 @@ test('side by side: the longer side of the slot decides where the halves go, and
   assert.ok(floors(siteParts(column({ focused: true, add: 1, del: 1, parts: [] }), SHELL, { heightOf: height }).parts) === 1, 'a single line is still a level');
 });
 
+test('crates and rubble: the same layout and levels as side by side, as solid stacks', () => {
+  const col = column({ focused: true, add: 420, del: 310, w: 12, d: 6, parts: [] }), lv = (n) => Math.round(height(n) / FLOOR_H);
+  const { parts, top: t } = siteParts(col, SHELL, { heightOf: height, focusStyle: 'crates' });
+  const crates = parts.filter((p) => p.tone === 'add' || p.tone === 'crateDark'), rubble = parts.filter((p) => p.tone === 'rubble' || p.tone === 'rubble2');
+  const levelsOf = (list) => new Set(list.map((p) => Math.round((p.z - 12.3) / FLOOR_H))).size;
+  assert.equal(levelsOf(crates), lv(420), 'one layer of crates per level'); assert.equal(levelsOf(rubble), lv(310), 'one layer of rubble per level');
+  assert.ok(parts.some((p) => p.tone === 'pallet') && parts.some((p) => p.tone === 'skip') && parts.some((p) => p.tone === 'addPad'));
+  assert.ok(Math.max(...crates.map((p) => p.z + p.h)) <= 12.3 + lv(420) * FLOOR_H + 1e-6 && Math.max(...rubble.map((p) => p.z + p.h)) <= 12.3 + lv(310) * FLOOR_H + 1e-6, 'no taller than the levels say');
+  const pad = (tone) => parts.find((p) => p.tone === tone); assert.ok(pad('addPad').x < pad('delPad').x, 'adds left, deletes right');
+  for (const p of parts) assert.ok(p.x - p.w / 2 >= col.x - 6.01 && p.x + p.w / 2 <= col.x + 6.01 && p.y - p.d / 2 >= col.y - 3.01 && p.y + p.d / 2 <= col.y + 3.01, 'inside the slot');
+  assert.ok(parts.length < 500 && t > 12);
+  assert.deepEqual(siteParts(col, SHELL, { heightOf: height, focusStyle: 'crates' }), { parts, top: t }, 'the rubble is the same every time');
+  assert.ok(!siteParts(column({ focused: true, add: 50, del: 0, parts: [] }), SHELL, { heightOf: height, focusStyle: 'crates' }).parts.some((p) => p.tone === 'skip' || p.tone === 'rubble'), 'no deletions: no skip');
+});
+
 test('every column in the sample turns into a bounded number of boxes', () => {
   const layout = buildLayout(sampleFiles()), st = { ...DEFAULT_STYLE }, b = new Map(), roofs = new Map();
   for (const l of layout.leaves) { const x = buildingFor(l, st, { gear: false }); b.set(l.path, x); roofs.set(l.path, { r: x.roof, height: x.roof.z }); }
   const prs = [{ id: '#1', status: 'review_requested', files: layout.leaves.map((l) => ({ path: l.path, add: 25, del: 5, hunks: [{ add: 25, del: 5 }] })) }];
   for (const focusId of [null, '#1']) for (const col of planSpires({ byPath: layout.byPath, prs, roofs, focusId })) {
-    const { parts, top: t } = siteParts(col, b.get(col.path).shell, { heightOf: height, focusStyle: focusId ? 'side' : 'facade' });
+    const { parts, top: t } = siteParts(col, b.get(col.path).shell, { heightOf: height, focusStyle: focusId ? 'crates' : 'facade' });
     assert.ok(parts.length > 0 && parts.length < 220, `${parts.length} boxes`);
     assert.ok(parts.every((p) => Number.isFinite(p.x + p.y + p.z) && (p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0)) && t >= col.z0);
   }

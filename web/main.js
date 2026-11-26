@@ -288,8 +288,8 @@ function buildingsSection() {
     h('small', null, BSTYLE_HELP[b.mode]),
     b.mode === 'plain' ? null : [
       slider('b-spread', 'Hue spread', 'spread', 0, 50, 1, (v) => `${v}\u00b0`),
-      full ? h('div', { class: 'fl' }, h('span', null, 'Focused PR'), seg([['side', 'Side by side'], ['facade', 'Facade']], b.focus, (v) => set({ focus: v }, true), 'Focused PR diff style')) : null,
-      full ? h('small', null, b.focus === 'side' ? 'Additions (green scaffold) and deletions (taped floors) stand next to each other on the roof: same footprint, same level height, so count the levels.' : 'Additions climb the walls as scaffolding; deletions stack as taped floors on the roof.') : null,
+      full ? h('div', { class: 'fl' }, h('span', null, 'Focused PR'), seg([['crates', 'Crates'], ['side', 'Frames'], ['facade', 'Facade']], b.focus, (v) => set({ focus: v }, true), 'Focused PR diff style')) : null,
+      full ? h('small', null, b.focus === 'crates' ? 'Additions are crates delivered (a green stack on a pallet) and deletions are debris hauled away (a rubble heap in a red skip). Same footprint and level height: count the levels.' : b.focus === 'side' ? 'Additions (green scaffold) and deletions (taped floors) stand next to each other on the roof: same footprint, same level height, so count the levels.' : 'Additions climb the walls as scaffolding; deletions stack as taped floors on the roof.') : null,
       full ? slider('b-dens', 'Window density', 'density', 0.6, 2, 0.1, (v) => `${v.toFixed(1)}x`) : null,
       full ? slider('b-var', 'Shape variety', 'variety', 1, 7, 1, (v) => String(v)) : null,
       full ? slider('b-height', 'Height boost', 'height', 1, 3, 0.1, (v) => `${v.toFixed(1)}x`) : null,
@@ -346,6 +346,7 @@ function openKey() {
       h('ul', null,
         h('li', null, h('b', null, 'Crane'), ' on a roof = a PR is adding code to this file. Its colour is the PR\u2019s status, so it matches the flag. The whole crane is scaled by lines added on the same scale as the toppers, whatever the file or roof, so the same lines are the same crane anywhere. The flat pad under it is the share of the file changed. Two PRs on one roof, two cranes.'),
         h('li', null, h('b', null, 'Scaffolding'), ' (green, with a ring in the PR colour at the top) = you focused a PR and this is what it adds. By default it is a tower on the left of the roof, next to the taped floors for the deletions: same footprint, same baseline, same level height, so count the levels to compare added with deleted. Layers > Focused PR > Facade puts it up the walls instead, as high as lines added (never past the fully walled part).'),
+        h('li', null, h('b', null, 'Crates and a skip'), ' (Layers > Focused PR > Crates, the default in this spike) = the focused PR\u2019s change as a yard: additions are a solid stack of green crates on a pallet, deletions are a rubble heap in a red skip beside it. Same footprint and level height, as many levels as the lines need on the one scale, so count the levels.'),
         h('li', null, h('b', null, 'Red-taped floor'), ' = lines were deleted. An emptied floor with red tape in an X on every face. The stack is as tall as lines deleted on that same scale (one floor is 2.4 of it, up to 24 floors); focused, it is one tower on the right of the roof, the same size as the additions tower.'),
         h('li', null, 'The Plain and Colours styles keep the plain toppers described above.')),
       h('h3', null, 'FOCUSED PR'),
