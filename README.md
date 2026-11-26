@@ -19,6 +19,7 @@ Needs Node 20+. `npm link` gives you a global `battlemap` command.
 * **Footprint** = lines of code. **Height** = complexity. **Colour** = top-level package. Same file list, same map, every time.
 * **Buildings.** Every file also gets a look of its own, derived from a hash of its path: a shade inside its folder's colour, a silhouette (block, stepped, crown, L-shape, tower on a podium, terraced slabs or twin towers), a wall material (concrete, brick, stone or steel), a window pattern with its own window size, share of lit windows and warm glow, and a rooftop detail (antenna, water tank, vents). Each building also keeps a margin of its own inside its lot, so there are gaps and a mix of widths, like blocks of a city. The same file always looks the same, so neighbours in one folder are easy to tell apart without reading labels, and the folder colour still reads from far away. A short **index code** on each roof (`C-14`) gives people a name to say out loud: "look at C-14". It also shows in the hover tip and the file bar. Footprint still follows lines of code and height still follows complexity.
 * **Toppers.** Each PR that touches a file raises a column on that roof. Its **width** is the share of the file the PR changes (at least 20%, so one-line edits still show), and two PRs on one file split the roof. Its **height** is lines changed (adds + dels) on one global scale, so any two toppers on the map compare by eye. Layers > Spires switches the height scale between square root (default), linear and log, and the width between "Share of file" and "Slim".
+* **Construction sites** (Layers > Buildings > Buildings; Plain and Colours keep the toppers). A PR that adds code to a file puts a **tower crane** on its roof, in the PR's status colour so it matches the flag, as tall as the lines changed on the same global scale. Two PRs on one roof, two cranes. A PR that **deletes** lines adds a **red-taped floor**: an emptied floor, open frame, with red tape in an X on every face; the more it deletes, the taller. **Focus a PR** and its cranes give way to **scaffolding** up the walls (green, with a ring in the PR colour on top, climbing with the share of the file added) and one taped floor per deleting hunk. Every other PR turns to glass.
 * **Contested files** (two or more PRs) get a static amber frame around the roof.
 * **Focus a PR** (tap a card, flag or topper). Its columns split into hunks: red for deleted lines, green for added, heights proportional to lines. Every other PR turns to glass. Per-file `+n -n` floats over each topper and the left panel lists every file with a green/red bar. Moving dotted lines run from the flag to every file it touches.
 * **Flags** are PRs, and each fact has its own channel so they can be told apart from far away: the text is the PR number, ring colour = status, fill = author, the corner emblem (shape and hue) = epic, gold pulse = needs you. Every PR in one epic wears the same emblem. **Fog of war** dims files nobody is working on.
@@ -26,6 +27,8 @@ Needs Node 20+. `npm link` gives you a global `battlemap` command.
 * **KEY** (corner button) explains every shape and colour.
 
 ![A focused PR with hunks](docs/screenshots/hunks.png)
+
+![Scaffolding and a taped floor on a focused PR](docs/screenshots/scaffolding.png)
 
 ### Layers
 

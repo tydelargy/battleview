@@ -6,6 +6,7 @@ import { buildLayout, WORLD } from './layout.js';
 import { planSpires, DIFF_COLORS } from './spires.js';
 import { ageDays, ageLift } from './filters.js';
 import { buildingFor, DEFAULT_STYLE, SHAPES } from './building.js';
+import { siteParts } from './sites.js';
 
 const CX = WORLD.w / 2, CY = WORLD.h / 2;
 const FLAG_W = { collapsed: 78, expanded: 214 }, FLAG_H = 34;
@@ -44,10 +45,10 @@ class Pool {
     this.mesh = mesh; this.scene.add(mesh);
   }
   begin(expected) { if (expected > this.cap) this.alloc(Math.ceil(expected * 1.5)); this.n = 0; this.meta.length = 0; }
-  push(pos, scale, color, meta, extra) {
+  push(pos, scale, color, meta, extra, quat) {
     const i = this.n++;
     if (extra) extra.forEach((v, k) => this.extra[k].array.set(v, i * 4));
-    _m.compose(pos, QID, scale);
+    _m.compose(pos, quat || QID, scale);
     this.mesh.setMatrixAt(i, _m);
     this.mesh.setColorAt(i, color);
     this.meta[i] = meta;
@@ -319,6 +320,7 @@ export function createScene(host, handlers = {}) {
     // roof gear (antennas, tanks) would poke through toppers, so buildings that carry a PR keep a clear roof
     const occ = new Set(S.columns.map((c) => c.path));
     if (occ.size !== S.occupied.size || [...occ].some((p) => !S.occupied.has(p))) { S.occupied = occ; restyle(); }
+    planSites();
     S.touched = new Set(S.columns.filter((c) => !c.dimmed || !S.opts.focusId).map((c) => c.path));
     S.contested = new Set(S.columns.filter((c) => c.sharedWith > 0 && !c.dimmed).map((c) => c.path));
     refreshBuildings();
@@ -327,9 +329,68 @@ export function createScene(host, handlers = {}) {
   }
 
   const capHeight = (c) => Math.min(2.4, 0.5 + Math.min(c.w, c.d) * 0.18);
+
+  // ---- construction sites (the Buildings style): cranes, scaffolding and red-taped floors instead of plain toppers ----
+  // Planned once per set of columns (the shapes are pure, see web/sites.js), then drawn every frame while they grow.
+  function planSites() {
+    S.sites = S.style.mode !== 'full' ? null : S.columns.map((c) => ({ c, parts: siteParts(c, S.styled.get(c.path)?.shell, { loc: S.layout.byPath.get(c.path).loc }) }));
+  }
+  const siteColor = (tone, st) => {
+    switch (tone) {
+      case 'status': return _c.copy(st);
+      case 'statusDark': return _c.copy(st).offsetHSL(0, 0, -0.16);
+      case 'metal': return _c.set(0x9aa5b1);
+      case 'add': return _c.set(DIFF_COLORS.add);
+      case 'tape': return _c.set(DIFF_COLORS.del);
+      case 'post': return _c.set(0xd7dbe2);
+      default: return _c.set(0x6b6670);            // the emptied floor
+    }
+  };
+  const _qa = new THREE.Quaternion(), AX = new THREE.Vector3(1, 0, 0), AZ = new THREE.Vector3(0, 0, 1);
+  function drawSites(p) {
+    const sites = S.sites;
+    let n = 0; for (const s of sites) n += s.parts.length;
+    const solid = sites.filter((s) => !s.c.dimmed), glass = sites.filter((s) => s.c.dimmed);
+    const count = (list) => list.reduce((a, s) => a + s.parts.length, 0);
+    boxes.begin(count(solid)); gBoxes.begin(count(glass)); caps.begin(0); gCaps.begin(0);
+    for (const { c, parts } of sites) {
+      const st = new THREE.Color(statusColor(c.status)), bp = c.dimmed ? gBoxes : boxes;
+      const base = { prId: c.prId, path: c.path, lines: c.lines, pct: c.pct, add: c.add, del: c.del };
+      for (const q of parts) {
+        const ground = q.ground ? 0 : c.z0, kind = q.tone === 'add' || q.ground ? 'add' : q.tone === 'tape' || q.tone === 'post' || q.tone === 'floor' ? 'del' : 'pr';
+        const meta = { ...base, kind, n: kind === 'add' ? c.add : kind === 'del' ? c.del : undefined };
+        const col = siteColor(q.tone, st);
+        if (q.diag) {                                // a diagonal of tape: a thin box turned in the plane of its wall
+          const z = ground + (q.z - ground) * p, len = q.len * p;
+          if (q.along === 'x') { _qa.setFromAxisAngle(AZ, q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(len, q.t, q.t), col, meta, undefined, _qa); }
+          else { _qa.setFromAxisAngle(AX, -q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(q.t, q.t, len), col, meta, undefined, _qa); }
+        } else bp.push(_p.set(q.x - CX, ground + (q.z - ground) * p, q.y - CY), _s.set(q.w, Math.max(0.02, q.h * p), q.d), col, meta);
+      }
+    }
+    return n;
+  }
+  // Amber frame around any roof that two or more PRs share. Static on purpose.
+  function drawRims() {
+    rims.begin(S.contested.size * 4);
+    for (const path of S.contested) {
+      const r = roofOf(S.layout.byPath.get(path)), t = 0.55, y = r.top - 0.3, x = r.cx - CX, z = r.cy - CY;
+      rims.push(_p.set(x, y, z - r.h / 2 - t / 2), _s.set(r.w + t * 2, 0.75, t), _c.set(0xffffff), { path });
+      rims.push(_p.set(x, y, z + r.h / 2 + t / 2), _s.set(r.w + t * 2, 0.75, t), _c, { path });
+      rims.push(_p.set(x - r.w / 2 - t / 2, y, z), _s.set(t, 0.75, r.h), _c, { path });
+      rims.push(_p.set(x + r.w / 2 + t / 2, y, z), _s.set(t, 0.75, r.h), _c, { path });
+    }
+    rims.end();
+  }
   function drawSpires(progress) {
     const p = ease(Math.min(1, Math.max(0, progress)));
     S.growth.p = p;
+    if (S.sites) {
+      drawSites(p);
+      [boxes, caps, gBoxes, gCaps].forEach((x) => x.end());
+      drawRims();
+      S.focusLabels = S.columns.filter((c) => c.focused).slice(0, diffLabels.length).map((c) => ({ c, top: c.z0 + (c.total + capHeight(c)) * p + 1.5 }));
+      return;
+    }
     const solidCols = S.columns.filter((c) => !c.dimmed), glassCols = S.columns.filter((c) => c.dimmed);
     boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0)); caps.begin(solidCols.length);
     gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0)); gCaps.begin(glassCols.length);
@@ -345,16 +406,7 @@ export function createScene(host, handlers = {}) {
       cp.push(_p.set(c.x - CX, c.z0 + c.total * p, c.y - CY), _s.set(c.w * 0.7071, Math.max(0.02, capHeight(c) * p), c.d * 0.7071), _c.copy(st).offsetHSL(0, 0, 0.07), { ...meta, kind: 'cap' });
     }
     [boxes, caps, gBoxes, gCaps].forEach((x) => x.end());
-    // Amber frame around any roof that two or more PRs share. Static on purpose.
-    rims.begin(S.contested.size * 4);
-    for (const path of S.contested) {
-      const r = roofOf(S.layout.byPath.get(path)), t = 0.55, y = r.top - 0.3, x = r.cx - CX, z = r.cy - CY;
-      rims.push(_p.set(x, y, z - r.h / 2 - t / 2), _s.set(r.w + t * 2, 0.75, t), _c.set(0xffffff), { path });
-      rims.push(_p.set(x, y, z + r.h / 2 + t / 2), _s.set(r.w + t * 2, 0.75, t), _c, { path });
-      rims.push(_p.set(x - r.w / 2 - t / 2, y, z), _s.set(t, 0.75, r.h), _c, { path });
-      rims.push(_p.set(x + r.w / 2 + t / 2, y, z), _s.set(t, 0.75, r.h), _c, { path });
-    }
-    rims.end();
+    drawRims();
     S.focusLabels = S.columns.filter((c) => c.focused).slice(0, diffLabels.length).map((c) => ({ c, top: c.z0 + (c.total + capHeight(c)) * p + 1.5 }));
   }
 

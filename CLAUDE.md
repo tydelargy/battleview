@@ -26,7 +26,7 @@ server/providers/         code-host adapters for the sync: a PURE mapper (normal
 server/feedwatch.js       watches the feed's DIRECTORY, because a watch on the file dies when sync renames a new file over it
 server/watch.js           which PRs are tracked (picks, author and path rules, ended PRs). PURE matching + a small file-backed store
 server/config.js          config file (0600), Jira settings validation, token redaction
-web/layout.js spires.js sigil.js building.js    PURE geometry and identity (building.js: hash-derived colour, silhouette, windows, index code, roofs; planSpires takes a `roofs` map so toppers stand on them). No DOM, no three. Unit tested
+web/layout.js spires.js sigil.js building.js sites.js    PURE geometry and identity (sites.js: cranes, scaffolding and red-taped floors that replace toppers in the Buildings style; building.js: hash-derived colour, silhouette, windows, index code, roofs; planSpires takes a `roofs` map so toppers stand on them). No DOM, no three. Unit tested
 web/filters.js            PURE filter and sort model ("needs attention first" is a tiered comparator; see `attentionTier`) for the PR tray and the map (one model: search, authors, status, age, needs-me, epic). Takes `now` as an argument
 web/scene.js              Three.js glue: instanced meshes, camera, SVG/HTML overlay. Only checked by a smoke test with a stand-in three
 web/main.js               panels, dialogs, settings. All feed data goes in through h()/fill() as text nodes, never HTML
@@ -37,7 +37,7 @@ web/main.js               panels, dialogs, settings. All feed data goes in throu
 - **No untrusted HTML.** PR titles, authors, branch names and rule values come from outside. Build DOM with `h()` and `fill()` (text nodes). Never `innerHTML` with feed data. `e2e/ui.mjs` has an XSS test; keep it passing.
 - **The token never reaches the browser.** `redact()` strips it. Don't add a field to `/api/config` or the snapshot without checking it.
 - **Writes need `X-Battlemap: 1` and a same-origin Origin; the Host header is checked.** There is no login: it binds to 127.0.0.1 and must never be bound publicly. Single-user, local by design.
-- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js`, `building.js`, `filters.js`, the matching functions in `watch.js` and the provider mappers take data and return data. If you need the clock, a file or the network, pass it in.
+- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js`, `building.js`, `sites.js`, `filters.js`, the matching functions in `watch.js` and the provider mappers take data and return data. If you need the clock, a file or the network, pass it in.
 - **The feed is the full set of open PRs.** `server/watch.js` treats a tracked PR that disappears from the feed as ended (closed), so a partial feed ends PRs. Sync scripts must write the whole set, or nothing.
 - **Tracking is opt-in; muting wins.** A stopped (muted) PR stays off even when a rule matches. Finished PRs are only kept if they were open and tracked, or picked. See the tests in `test/watch.test.js` before changing any of it.
 - **The built-in sample is never persisted** (no tracking state, no "was open" memory), and `--mock-jira` writes nothing to disk.

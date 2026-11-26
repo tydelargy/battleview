@@ -77,7 +77,7 @@ export function traits(path, style, hue) {
 /**
  * The boxes a building is made of, and its roof. `rect` is the footprint {x, y, w, h} (top-left corner),
  * `H` the height. Each part is {x, y, w, d, z, h, dl}: a box on the ground plane from (x, y), `z` up from the
- * ground, `dl` a lightness nudge. `roof` is where toppers stand ({x, y, w, h} and `z`, the height of that roof).
+ * ground, `dl` a lightness nudge. `shell` is how high the whole footprint is walled (scaffolding stops there). `roof` is where toppers stand ({x, y, w, h} and `z`, the height of that roof).
  * Silhouettes: block; stepped (three tiers); crown (wide base, narrower top); L (a tall half and a lower half;
  * toppers stand on the tall half).
  */
@@ -91,19 +91,19 @@ export function silhouette(shape, rect, H, v = 0.5) {
       parts.push(box(x + a, y + b, W - 2 * a, D - 2 * b, z, H * frac));
       top = { x: x + a, y: y + b, w: W - 2 * a, h: D - 2 * b }; z += H * frac;
     }
-    return { parts, roof: { ...top, z: H } };
+    return { parts, roof: { ...top, z: H }, shell: H * 0.5 };
   }
   if (shape === 2) {
     const top = { x: x + W * 0.22, y: y + D * 0.22, w: W * 0.56, h: D * 0.56 };
-    return { parts: [box(x, y, W, D, 0, H * 0.68), box(top.x, top.y, top.w, top.h, H * 0.68, H * 0.32, 3)], roof: { ...top, z: H } };
+    return { parts: [box(x, y, W, D, 0, H * 0.68), box(top.x, top.y, top.w, top.h, H * 0.68, H * 0.32, 3)], roof: { ...top, z: H }, shell: H * 0.68 };
   }
   if (shape === 3) {
     const tall = { x, y, w: W, h: D * 0.5 };
-    return { parts: [box(x, y, W, D * 0.5, 0, H), box(x, y + D * 0.5, W, D * 0.5, 0, H * 0.55, -2)], roof: { ...tall, z: H } };
+    return { parts: [box(x, y, W, D * 0.5, 0, H), box(x, y + D * 0.5, W, D * 0.5, 0, H * 0.55, -2)], roof: { ...tall, z: H }, shell: H * 0.55 };
   }
   if (shape === 4) {                                  // tower: a low podium with one slim tower rising from it
     const ins = 0.26 + 0.12 * v, tw = { x: x + W * ins, y: y + D * ins, w: W * (1 - 2 * ins), h: D * (1 - 2 * ins) }, ph = H * (0.25 + 0.15 * v);
-    return { parts: [box(x, y, W, D, 0, ph, -3), box(tw.x, tw.y, tw.w, tw.h, ph, H - ph)], roof: { ...tw, z: H } };
+    return { parts: [box(x, y, W, D, 0, ph, -3), box(tw.x, tw.y, tw.w, tw.h, ph, H - ph)], roof: { ...tw, z: H }, shell: ph };
   }
   if (shape === 5) {                                  // terraced: three slabs stepping up along the longer side
     const alongX = W >= D, flip = v > 0.5, parts = [];
@@ -112,15 +112,15 @@ export function silhouette(shape, rect, H, v = 0.5) {
       const k = flip ? 2 - i : i, r = alongX ? { x: x + (W / 3) * k, y, w: W / 3, h: D } : { x, y: y + (D / 3) * k, w: W, h: D / 3 };
       parts.push(box(r.x, r.y, r.w, r.h, 0, H * f, i === 2 ? 0 : -2)); if (f === 1) roof = { ...r, z: H };
     });
-    return { parts, roof };
+    return { parts, roof, shell: H * 0.5 };
   }
   if (shape === 6) {                                  // twin towers on a shared base; the roof is the taller one
     const alongX = W >= D, bh = H * 0.25, first = v > 0.5, L = alongX ? W : D;
     const t = (o) => (alongX ? { x: x + L * o, y, w: L * 0.38, h: D } : { x, y: y + L * o, w: W, h: L * 0.38 });
     const a = t(0), b = t(0.62), tall = first ? b : a, low = first ? a : b;
-    return { parts: [box(x, y, W, D, 0, bh, -3), box(tall.x, tall.y, tall.w, tall.h, bh, H - bh), box(low.x, low.y, low.w, low.h, bh, H * 0.78 - bh, -2)], roof: { ...tall, z: H } };
+    return { parts: [box(x, y, W, D, 0, bh, -3), box(tall.x, tall.y, tall.w, tall.h, bh, H - bh), box(low.x, low.y, low.w, low.h, bh, H * 0.78 - bh, -2)], roof: { ...tall, z: H }, shell: bh };
   }
-  return { parts: [box(x, y, W, D, 0, H)], roof: { x, y, w: W, h: D, z: H } };
+  return { parts: [box(x, y, W, D, 0, H)], roof: { x, y, w: W, h: D, z: H }, shell: H };
 }
 
 /** The small thing on the roof: an antenna, a water tank or two vents, as boxes in the same format. */
@@ -137,11 +137,11 @@ export function roofGear(kind, roof, H) {
  */
 export function buildingFor(leaf, style, { gear = true } = {}) {
   const t = traits(leaf.path, style, leaf.hue);
-  if (style.mode !== 'full') return { t, parts: [{ x: leaf.r.x, y: leaf.r.y, w: leaf.r.w, d: leaf.r.h, z: 0, h: leaf.height, dl: 0 }], roof: { ...leaf.r, z: leaf.height } };
+  if (style.mode !== 'full') return { t, parts: [{ x: leaf.r.x, y: leaf.r.y, w: leaf.r.w, d: leaf.r.h, z: 0, h: leaf.height, dl: 0 }], roof: { ...leaf.r, z: leaf.height }, shell: { rect: leaf.r, h: leaf.height } };
   // Each building stands on its lot with a margin of its own (up to 28% a side), so neighbours differ in width and
   // depth and there are gaps between them, like blocks of a city. Height is complexity times one global multiplier.
   const { fx, fy, ox, oy } = t.lot, r = leaf.r, w = Math.max(0.5, r.w * fx), h = Math.max(0.5, r.h * fy);
   const rect = { x: r.x + (r.w - w) * ox, y: r.y + (r.h - h) * oy, w, h }, H = leaf.height * style.height;
-  const { parts, roof } = silhouette(t.shape, rect, H, t.shapeV);
-  return { t, parts: gear ? [...parts, ...roofGear(t.gear, roof, H)] : parts, roof };
+  const { parts, roof, shell } = silhouette(t.shape, rect, H, t.shapeV);
+  return { t, parts: gear ? [...parts, ...roofGear(t.gear, roof, H)] : parts, roof, shell: { rect, h: shell } };
 }

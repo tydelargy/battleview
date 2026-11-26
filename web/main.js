@@ -340,6 +340,12 @@ function openKey() {
         h('li', null, h('b', null, 'Height'), ` = lines changed (adds + deletes), one scale for the whole map. Now: ${SCALES[state.scale].label.toLowerCase()}; ${ticks.map((t) => `${t.lines} lines = ${t.height.toFixed(1)}`).join(', ')}.`),
         h('li', null, h('b', null, 'Colour'), ' = PR status:')),
       h('ul', { class: 'sw2' }, Object.values(STATUS).filter((v) => !v.ended).map((v) => sw(v.color, `${v.label} ${v.glyph}`))),
+      h('h3', null, 'CONSTRUCTION SITES (Layers > Buildings > Buildings)'),
+      h('ul', null,
+        h('li', null, h('b', null, 'Crane'), ' on a roof = a PR is adding code to this file. Its colour is the PR\u2019s status, so it matches the flag; its height is lines changed on the same scale as toppers. Two PRs on one roof, two cranes.'),
+        h('li', null, h('b', null, 'Scaffolding'), ' up the walls (green, with a ring in the PR colour at the top) = you focused a PR and this is what it adds. The taller it climbs, the bigger the share of the file added.'),
+        h('li', null, h('b', null, 'Red-taped floor'), ' = lines were deleted. An emptied floor with red tape in an X on every face; focused, one floor per deleting hunk. Taller means more lines deleted.'),
+        h('li', null, 'The Plain and Colours styles keep the plain toppers described above.')),
       h('h3', null, 'FOCUSED PR'),
       h('ul', null, sw(DIFF_COLORS.add, 'Added lines, one block per hunk'), sw(DIFF_COLORS.del, 'Deleted lines, one block per hunk (slightly narrower)'), h('li', null, 'Block heights are proportional to line counts. Other PRs turn to glass.'), h('li', null, 'Moving dotted lines run from the flag to every file the PR touches.')),
       h('h3', null, 'FLAGS AND MARKERS'),
@@ -366,7 +372,7 @@ function onHover(hit, x, y) {
 function onPickFile(path) {
   showFileBar(path);
   const prs = state.snap.prs.filter((p) => p.files.some((f) => f.path === path));
-  if (prs.length === 1) selectPR(prs[0].id, false); else if (prs.length > 1) toast(`${path.split('/').pop()}: ${prs.map((p) => p.ticketKey || p.id).join(', ')}. Tap a spire to focus one.`);
+  if (prs.length === 1) selectPR(prs[0].id, false); else if (prs.length > 1) toast(`${path.split('/').pop()}: ${prs.map((p) => p.ticketKey || p.id).join(', ')}. Tap a crane or topper to focus one.`);
 }
 
 /* ---------- toast ---------- */

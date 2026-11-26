@@ -21,7 +21,7 @@ export class Vector3 { constructor(x=0,y=0,z=0){this.x=x;this.y=y;this.z=z}
   distanceTo(v){return Math.hypot(this.x-v.x,this.y-v.y,this.z-v.z)}
   project(){ const z=this.z; this.x=this.x/1000; this.y=this.y/1000; this.z=0.5; return this } }
 export class Vector2 { constructor(){this.x=0;this.y=0} set(x,y){this.x=x;this.y=y;return this} }
-export class Quaternion {}
+export class Quaternion { setFromAxisAngle(){return this} }
 export class Matrix4 { compose(p,q,s){ this.p=p.clone(); this.s=s.clone(); return this } }
 export class Color { constructor(c){this.c=c} set(c){this.c=c;return this} copy(o){this.c=o.c;return this} setHSL(){return this} offsetHSL(){return this} }
 export class FogExp2 {}
@@ -56,7 +56,7 @@ test('scene wiring with a stand-in three', async () => {
   const tdir = path.join(dir, 'node_modules/three'); fs.mkdirSync(path.join(tdir, 'examples/jsm/controls'), { recursive: true });
   fs.writeFileSync(path.join(tdir, 'package.json'), JSON.stringify({ name: 'three', type: 'module', exports: { '.': './index.js', './addons/*': './examples/jsm/*' } }));
   fs.writeFileSync(path.join(tdir, 'index.js'), FAKE_THREE); fs.writeFileSync(path.join(tdir, 'examples/jsm/controls/OrbitControls.js'), FAKE_ORBIT);
-  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js', 'building.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
+  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js', 'building.js', 'sites.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
   fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
 
   const frames = []; globalThis.requestAnimationFrame = (f) => { frames.push(f); return frames.length; };
@@ -69,7 +69,7 @@ test('scene wiring with a stand-in three', async () => {
   const sc = createScene(host, { makeFlag: (pr) => { const f = el(); f.pr = pr; flags.push(f); return f; }, updateFlag() {} });
   const { prs } = normalisePRs(samplePRs());
   const files = sampleFiles();
-  sc.setFiles(files);
+  sc.setFiles(files); sc.setStyle({ mode: 'plain' });
   const meshes = () => { const m = globalThis.__meshes.filter((x) => !x.disposed); return m; };
   const count = (geo, glass) => meshes().filter((m) => m.geometry.constructor.name === geo && !!m.material.transparent === glass).reduce((a, m) => a + m.count, 0);
   assert.equal(sc.info().buildings, files.length);
@@ -77,6 +77,7 @@ test('scene wiring with a stand-in three', async () => {
   sc.setPRs(prs, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: { ci_failing: '#f00' } });
   await run(4);
   const nCols = prs.reduce((a, p) => a + p.files.length, 0);
+  const focus0 = () => prs.find((p) => p.id === '#2291');
   assert.equal(sc.info().columns, nCols); assert.equal(sc.info().flags, prs.length);
   assert.equal(count('BoxGeometry', false) >= nCols, true);        // buildings + plates + spires, all solid
   assert.equal(count('ConeGeometry', false), nCols, 'one cap per column');
@@ -107,6 +108,19 @@ test('scene wiring with a stand-in three', async () => {
   sc.setStyle({ density: 1.6 }); sc.setStyle({ mode: 'full', variety: 4, salt: 0 });
   sc.setPRs(prs, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} });
   assert.equal(sc.info().columns, nCols, 'every topper still finds a roof');
+
+  // construction sites: cranes (and taped floors) in the overview, scaffolding for the focused PR, glass for the rest; no cone caps
+  const solidBoxN = () => meshes().filter((m) => m.geometry.constructor.name === 'BoxGeometry' && !m.material.transparent).reduce((a, m) => a + m.count, 0);
+  const glassBoxN = () => meshes().filter((m) => m.geometry.constructor.name === 'BoxGeometry' && m.material.transparent).reduce((a, m) => a + m.count, 0);
+  sc.setStyle({ mode: 'full', variety: 7 });
+  sc.setPRs(prs, { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); await run(4);
+  assert.equal(count('ConeGeometry', false), 0, 'cranes have no cone cap');
+  const craneBoxes = glassBoxN() + solidBoxN();
+  sc.setPRs(prs, { mode: 'sqrt', focusId: '#2291', visible: null, fog: true, statusColors: {} }); await run(4);
+  assert.ok(glassBoxN() >= (nCols - focus0().files.length) * 7, 'other PRs keep their cranes, as glass');
+  assert.ok(solidBoxN() > 0 && craneBoxes > nCols * 7, 'a crane is several boxes');
+  assert.equal(sc.info().columns, nCols);
+  sc.setStyle({ mode: 'plain' });
 
   // focus: the focused PR's columns become hunk stacks, everything else turns to glass
   const focus = prs.find((p) => p.id === '#2291');
