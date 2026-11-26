@@ -15,10 +15,15 @@ Tests and e2e write scratch files to the system temp dir. Set `TMPDIR` if you wa
 
 ## Where things live
 
+`deploy/` has the systemd units and installer; `test/deploy.test.js` renders them into a temp dir, so nothing there touches your systemd.
+
 ```
-bin/battlemap.js          CLI: server, --prs feed file, --repo, --mock-jira
+bin/battlemap.js          CLI: server, --prs feed file, --repo, --rescan, --mock-jira
+bin/battlemap-sync.js     CLI: writes the feed file from a code host (cron / systemd timer). Replaces the file atomically, never on failure
 server/server.js          HTTP API + SSE. All state lives in `app`; every write goes through a handler that checks the X-Battlemap header
 server/snapshot.js        joins repo files, tracked PRs and Jira into the one object the browser renders; drift "insights"
+server/providers/         code-host adapters for the sync: a PURE mapper (normalisePR) plus a runner that takes an injectable `exec`. github.js today; GitLab would be a sibling
+server/feedwatch.js       watches the feed's DIRECTORY, because a watch on the file dies when sync renames a new file over it
 server/watch.js           which PRs are tracked (picks, author and path rules, ended PRs). PURE matching + a small file-backed store
 server/config.js          config file (0600), Jira settings validation, token redaction
 web/layout.js spires.js sigil.js    PURE geometry and identity. No DOM, no three. Unit tested
@@ -31,7 +36,7 @@ web/main.js               panels, dialogs, settings. All feed data goes in throu
 - **No untrusted HTML.** PR titles, authors, branch names and rule values come from outside. Build DOM with `h()` and `fill()` (text nodes). Never `innerHTML` with feed data. `e2e/ui.mjs` has an XSS test; keep it passing.
 - **The token never reaches the browser.** `redact()` strips it. Don't add a field to `/api/config` or the snapshot without checking it.
 - **Writes need `X-Battlemap: 1` and a same-origin Origin; the Host header is checked.** There is no login: it binds to 127.0.0.1 and must never be bound publicly. Single-user, local by design.
-- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js` and the matching functions in `watch.js` take data and return data. If you need the clock, a file or the network, pass it in.
+- **Pure modules stay pure.** `layout.js`, `spires.js`, `sigil.js`, the matching functions in `watch.js` and the provider mappers take data and return data. If you need the clock, a file or the network, pass it in.
 - **The feed is the full set of open PRs.** `server/watch.js` treats a tracked PR that disappears from the feed as ended (closed), so a partial feed ends PRs. Sync scripts must write the whole set, or nothing.
 - **Tracking is opt-in; muting wins.** A stopped (muted) PR stays off even when a rule matches. Finished PRs are only kept if they were open and tracked, or picked. See the tests in `test/watch.test.js` before changing any of it.
 - **The built-in sample is never persisted** (no tracking state, no "was open" memory), and `--mock-jira` writes nothing to disk.
@@ -50,4 +55,4 @@ This repo uses Jujutsu (`jj`). One commit per feature, stacked; fix-ups go into 
 
 ## Feed
 
-`battlemap --prs prs.json` reloads when the file changes. The format is in the README. Fields the UI relies on beyond the basics: `updatedAt`, and `mine` when the feed knows who the viewer is.
+`battlemap --prs prs.json` reloads when the file changes. `battlemap-sync github` writes it from `gh`; the format is in the README. Fields the UI relies on beyond the basics: `updatedAt`, `createdAt`, `headSha` (to notice pushes), and `mine` (set by sync from the logged-in user). Sync tests use a stand-in `gh` script, never the network or a real account: keep it that way.

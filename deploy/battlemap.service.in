@@ -1,0 +1,12 @@
+[Unit]
+Description=Battle Map: the codebase, its open PRs and their tickets, on one map
+After=network-online.target
+
+[Service]
+# Serves http://127.0.0.1:4747. It binds to localhost on purpose: there is no login.
+ExecStart=@BATTLEMAP@ --repo @CHECKOUT@ --prs @FEED@ --rescan 600
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

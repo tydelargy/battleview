@@ -1,0 +1,5 @@
+# Battle Map feed refresh, for machines without systemd user timers. Add with: crontab -e
+# cron has a minimal PATH, so everything is an absolute path: find yours with `command -v battlemap-sync gh`.
+# Add `--host ghe.example.com` for GitHub Enterprise. The server itself still needs to run (see deploy/install-systemd.sh
+# for a unit, or start it in tmux: battlemap --repo ~/code/repo --prs ~/.local/share/battlemap/prs.json --rescan 600).
+*/2 * * * * /usr/local/bin/battlemap-sync github --repo org/repo --gh /usr/bin/gh --out "$HOME/.local/share/battlemap/prs.json" --quiet

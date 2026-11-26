@@ -7,6 +7,7 @@ import { createApp } from '../server/server.js';
 import { createMockJira } from '../server/jira/mock.js';
 import { sampleFiles, samplePRs } from '../server/sample.js';
 import { scanRepo } from '../server/localrepo.js';
+import { watchFeed } from '../server/feedwatch.js';
 
 const HELP = `battlemap - tactical 3D map of your repo, PRs and Jira tickets
 
@@ -15,7 +16,8 @@ Usage: battlemap [options]
   --port <n>           Port to serve on (default 4747)
   --host <addr>        Bind address (default 127.0.0.1)
   --repo <dir>         Map a local git checkout instead of the sample repo
-  --prs <file.json>    Load PRs from a JSON file and reload when it changes
+  --prs <file.json>    Load PRs from a JSON file and reload when it changes (also when it is replaced atomically)
+  --rescan <seconds>   With --repo: look at the checkout again every so often, so new and changed files appear (default off)
   --mock-jira          Start a fake Jira and point Battle Map at it (nothing is saved)
   --mock-flavor <f>    server (default, PAT) or cloud (email + API token)
   --mock-port <n>      Port for the fake Jira (default 4748)
@@ -36,6 +38,7 @@ function parse(argv) {
     else if (a === '--host') o.host = next();
     else if (a === '--repo') o.repo = next();
     else if (a === '--prs') o.prs = next();
+    else if (a === '--rescan') o.rescan = Number(next());
     else if (a === '--mock-jira') o.mock = true;
     else if (a === '--mock-flavor') o.mockFlavor = next();
     else if (a === '--mock-port') o.mockPort = Number(next());
@@ -48,6 +51,8 @@ function parse(argv) {
 
 const o = parse(process.argv.slice(2));
 if (o.help) { process.stdout.write(HELP); process.exit(o.bad ? 1 : 0); }
+if (o.rescan != null && (!Number.isFinite(o.rescan) || o.rescan < 10)) { console.error('--rescan needs a number of seconds, at least 10'); process.exit(1); }
+if (o.rescan && !o.repo) { console.error('--rescan only makes sense with --repo'); process.exit(1); }
 if (!['server', 'cloud'].includes(o.mockFlavor)) { console.error('--mock-flavor must be server or cloud'); process.exit(1); }
 
 const store = new ConfigStore({ file: o.config });
@@ -71,7 +76,11 @@ if (o.mock) {
 
 const app = createApp({ store, files, prs, sampleMode: sample, log: (m) => console.warn(m) });
 if (o.prs) {
-  let t; fs.watch(o.prs, () => { clearTimeout(t); t = setTimeout(() => { try { const r = app.setPRs(loadPRs(o.prs)); app.refreshJira(); console.log(`Reloaded ${r.count} PRs${r.problems.length ? ` (${r.problems.length} problems)` : ''}`); } catch (e) { console.warn(`PR file not reloaded: ${e.message}`); } }, 150); });
+  watchFeed(o.prs, () => { try { const r = app.setPRs(loadPRs(o.prs)); app.refreshJira(); console.log(`Reloaded ${r.count} PRs${r.problems.length ? ` (${r.problems.length} problems)` : ''}`); } catch (e) { console.warn(`PR file not reloaded: ${e.message}`); } });
+}
+if (o.repo && o.rescan) {
+  // scanRepo is synchronous and reads every file, so keep the interval generous.
+  setInterval(() => { try { if (app.setFiles(scanRepo(o.repo))) console.log('Repo changed, map updated'); } catch (e) { console.warn(`Rescan failed: ${e.message}`); } }, o.rescan * 1000).unref();
 }
 let info;
 try { info = await app.listen(o.port, o.host); } catch (e) { console.error(e.code === 'EADDRINUSE' ? `Port ${o.port} is in use. Try --port ${o.port + 1}.` : e.message); process.exit(1); }

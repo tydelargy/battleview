@@ -256,6 +256,10 @@ export function createApp({ store = new ConfigStore(), watch, files = [], prs = 
   app.threeInstalled = !!threeDir;
   app.setPRs = (x) => { leaveSample(); const r = setPRs(x); broadcast(); return r; };
   app.watch = watch;
+  /** Swap in a fresh file list (a rescan of the checkout). Returns whether anything changed. */
+  const filesKey = (list) => list.map((f) => `${f.path}:${f.loc}:${f.complexity ?? 0}`).join('|');
+  let currentFilesKey = filesKey(app.files);
+  app.setFiles = (list) => { const k = filesKey(list); if (k === currentFilesKey) return false; currentFilesKey = k; app.files = list; broadcast(); return true; };
   app.refreshJira = refreshJira;
   app.snapshot = snapshot;
   app.listen = (port, host = '127.0.0.1') => new Promise((resolve, reject) => {

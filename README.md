@@ -93,6 +93,10 @@ curl -X POST localhost:4747/api/prs -H 'X-Battlemap: 1' -H 'Content-Type: applic
 bin/battlemap.js        CLI
 server/                 config, Jira client + mock, snapshot join and insights, local repo scan
 server/watch.js         what is tracked: picks, author and path rules, ended PRs (pure matching, tested)
+bin/battlemap-sync.js   CLI: write the PR feed from GitHub / GitHub Enterprise
+server/providers/       code-host adapters for the sync (github.js)
+server/feedwatch.js     reload the feed file when it changes, even when replaced atomically
+deploy/                 systemd units, an installer and a crontab line
 web/layout.js           deterministic treemap            (pure, tested)
 web/spires.js           spire + hunk geometry plan       (pure, tested)
 web/sigil.js            flag number, author colour, epic emblem (pure, tested)
@@ -101,6 +105,42 @@ web/main.js             panels, settings, Jira actions
 ```
 
 `npm test` runs the suite (Jira client against the mock, server and security, layout and spire maths, flag sigils, a scene wiring smoke test). `npm run e2e` drives the real UI in Chrome against the mock (needs Playwright).
+
+## Running it for real
+
+Everything above works from a file you feed it. To keep a map of a real repo live, with a cron job or systemd timer doing the feeding, you need three things: the code, a feed, and something to keep both fresh.
+
+**1. A checkout to map.** A dedicated clone is best, because the timer below runs `git pull --ff-only` in it and you do not want that touching your working copy:
+
+```
+git clone git@github.com:org/repo.git ~/.local/share/battlemap/repo
+```
+
+**2. The feed, from GitHub or GitHub Enterprise.** `battlemap-sync` asks the [GitHub CLI](https://cli.github.com) for the open PRs and writes the feed file. `gh` does the login, so Battle Map never handles a GitHub token:
+
+```
+gh auth login                                  # for Enterprise: gh auth login --hostname ghe.example.com
+battlemap-sync github --repo org/repo --out ~/.local/share/battlemap/prs.json
+battlemap-sync github --repo org/repo --host ghe.example.com --out ...      # Enterprise
+```
+
+It maps each PR to a status (draft, red CI, changes requested, approved and green, re-review, review requested), marks the ones you opened as yours, and also includes PRs merged or closed in the last two days (`--ended-days`) so they show as MERGED or CLOSED instead of just vanishing. It writes the file atomically and, if GitHub cannot be reached, leaves the old file alone: a failed run never empties your map. Files per PR come from `gh`, which caps very large PRs; hunks are estimated.
+
+**3. Keep it fresh.** The server reloads the feed whenever the file changes (including when it is replaced atomically), and `--rescan <seconds>` re-reads the checkout so new and changed files appear.
+
+```
+battlemap --repo ~/.local/share/battlemap/repo --prs ~/.local/share/battlemap/prs.json --rescan 600
+```
+
+To have that run by itself, with the feed refreshed every two minutes (and the checkout pulled), install the systemd user units:
+
+```
+deploy/install-systemd.sh --repo org/repo [--host ghe.example.com]
+```
+
+It writes `battlemap.service`, `battlemap-sync.service` and `battlemap-sync.timer` with absolute paths filled in, then enables them. Open `http://127.0.0.1:4747`. Logs: `journalctl --user -u battlemap -u battlemap-sync`. For a user service to keep running after you log out: `loginctl enable-linger $USER`. Without systemd, `deploy/crontab.example` has the one cron line that refreshes the feed.
+
+Notes: it is one repository per feed. It binds to localhost and has no login, so leave it that way. Your tracking choices live in `~/.config/battlemap/`, not in the feed, so refreshing never loses them.
 
 ## Choosing what to track
 

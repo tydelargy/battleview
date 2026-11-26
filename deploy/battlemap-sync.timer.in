@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the Battle Map PR feed every two minutes
+
+[Timer]
+OnBootSec=30s
+# Counted from when the last run finished, so a slow run never overlaps the next.
+OnUnitInactiveSec=2min
+
+[Install]
+WantedBy=timers.target

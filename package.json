@@ -4,7 +4,8 @@
   "description": "Tactical 3D map of your codebase, open PRs and Jira tickets",
   "type": "module",
   "bin": {
-    "battlemap": "bin/battlemap.js"
+    "battlemap": "bin/battlemap.js",
+    "battlemap-sync": "bin/battlemap-sync.js"
   },
   "scripts": {
     "start": "node bin/battlemap.js",
@@ -33,6 +34,7 @@
   ],
   "files": [
     "bin",
+    "deploy",
     "server",
     "web",
     "README.md",

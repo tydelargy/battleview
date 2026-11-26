@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh the Battle Map PR feed from @HOSTNAME@
+
+[Service]
+Type=oneshot
+# Keep the checkout current so the map follows the repo. The leading "-" means a failed pull does not stop the sync.
+ExecStartPre=-@GIT@ -C @CHECKOUT@ pull --ff-only --quiet
+ExecStart=@SYNC@ github --repo @REPO@ @HOSTARG@--gh @GH@ --out @FEED@ --quiet
