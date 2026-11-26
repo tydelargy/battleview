@@ -26,7 +26,8 @@ const README = ['shot:overview', 'view:3d', 'wait:2500', 'shot:3d', 'view:iso', 
   'click:#filterBtn', 'wait:600', 'shot:filters', 'click:#filterBtn', 'wait:300',
   'feed:sample', 'rule:author:kofi', 'rule:path:packages/core/domain/', 'pick:#2279', 'feed:sample-without-#2284', 'wait:2500', toStart, 'wait:300', 'shot:tracking',
   'click:#trackBtn', 'wait:700', 'shot:track-dialog', 'click:.mhead .btn', 'wait:300',
-  'change:#2291:push', 'change:#2279:re', 'change:#2305:ci', 'change:#2311:push', 'change:#2302:green', 'wait:4500', 'click:#bellBtn', 'wait:900', 'shot:notifications'];
+  'change:#2291:push', 'change:#2279:re', 'change:#2305:ci', 'change:#2311:push', 'change:#2302:green', 'wait:4500', 'click:#bellBtn', 'wait:900', 'shot:notifications',
+  'click:#np-re_review', 'wait:300', 'click:#nt-close', 'click:.card[data-id="#2305"]', 'wait:1800', 'click:#npr-bell', 'click:#npr-ci-lock', 'wait:900', 'shot:notify-pr'];
 const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'X-Battlemap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 let current = [];   // the PRs as last fed, so `change` can alter one and feed them again
 const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });

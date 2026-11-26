@@ -62,25 +62,84 @@ test('re-review, CI red and CI recovered; merging a PR with red CI is not "CI re
   } finally { await s.close(); }
 });
 
-test('policy: global switches cover everyone including you; per-PR mutes cover only other people', async () => {
+const putPR = (s, id, kind, enabled) => s.send('PUT', '/api/notify/pr', { id, kind, enabled });
+const putGlobal = (s, kind, enabled) => s.send('PUT', '/api/notify/policy', { kind, enabled });
+const feedOf = (o) => Object.entries(o).map(([n, v]) => raw(Number(n), v.author || 'devon', v.status || 'review_requested', v.sha || `s${n}`));
+const notifications = async (s) => (await s.get('/api/snapshot')).notifications;
+
+test('rules through the API: one rule for every PR, yours included; an override wins over the global switch either way', async () => {
   const s = await boot([raw(1, 'you'), raw(2, 'devon'), raw(3, 'ines')]);
   try {
-    assert.equal((await s.send('PUT', '/api/notify/pr', { id: '#2', kind: 'pushed', enabled: false })).status, 200);
-    assert.equal((await s.send('PUT', '/api/notify/pr', { id: '#3', kind: 'all', enabled: false })).status, 200);
-    assert.equal((await s.send('PUT', '/api/notify/pr', { id: '#1', kind: 'all', enabled: false })).status, 200, 'the API stores it...');
-    s.app.setPRs([raw(1, 'you', 'review_requested', 'n1'), raw(2, 'devon', 'review_requested', 'n2'), raw(3, 'ines', 'review_requested', 'n3')]);
-    assert.deepEqual((await s.inbox()).map((e) => e.prId), ['#1'], '...but it never hides your own PR; #2 and #3 are muted');
-    s.app.setPRs([raw(1, 'you', 'review_requested', 'n1'), raw(2, 'devon', 'ci_failing', 'n2'), raw(3, 'ines', 'ci_failing', 'n3')]);
-    assert.deepEqual((await s.inbox()).map((e) => e.event), ['ci_failed', 'pushed'], '#2 muted only for pushes, so its CI failure still comes through');
-    // unmute #2's pushes (null removes the override)
-    await s.send('PUT', '/api/notify/pr', { id: '#2', kind: 'pushed', enabled: null });
-    assert.equal((await s.get('/api/snapshot')).notifications.policy.perPR['#2'], undefined);
-    // global: switch CI off for everyone
-    assert.equal((await s.send('PUT', '/api/notify/policy', { kind: 'ci', enabled: false })).status, 200);
-    s.app.setPRs([raw(1, 'you', 'ci_failing', 'n1'), raw(2, 'devon', 'review_requested', 'n2'), raw(3, 'ines', 'review_requested', 'n3')]);
-    assert.equal((await s.inbox()).length, 2, 'CI is off globally, even for your own PR');
-    s.app.setPRs([raw(1, 'you', 'ci_failing', 'n1'), raw(2, 'devon', 'review_requested', 'n22'), raw(3, 'ines', 'review_requested', 'n3')]);
-    assert.equal((await s.inbox())[0].prId, '#2', 'and pushes still work');
+    const mine = (await s.get('/api/snapshot')).prs.find((p) => p.id === '#1').mine;
+    assert.equal(mine, true, 'the test needs #1 to be yours');
+    assert.equal((await putPR(s, '#1', 'pushed', false)).status, 200, 'you can override your own PR');
+    assert.equal((await putPR(s, '#2', 'pushed', false)).status, 200);
+    s.app.setPRs(feedOf({ 1: { author: 'you', sha: 'n1' }, 2: { sha: 'n2' }, 3: { author: 'ines', sha: 'n3' } }));
+    assert.deepEqual((await s.inbox()).map((e) => e.prId), ['#3'], 'a mute silences your own PR and others alike; only #3 follows the default');
+    // global ci off, then a positive override on one PR
+    assert.equal((await putGlobal(s, 'ci', false)).status, 200);
+    assert.equal((await putPR(s, '#2', 'ci', true)).status, 200);
+    s.app.setPRs(feedOf({ 1: { author: 'you', sha: 'n1', status: 'ci_failing' }, 2: { sha: 'n2', status: 'ci_failing' }, 3: { author: 'ines', sha: 'n3', status: 'ci_failing' } }));
+    assert.deepEqual((await s.inbox()).filter((e) => e.kind === 'ci').map((e) => e.prId), ['#2'], 'CI is off for everyone except the PR that asked to hear it');
+    // null puts a PR back on the default
+    assert.equal((await putPR(s, '#2', 'ci', null)).status, 200); assert.equal((await putPR(s, '#2', 'pushed', null)).status, 200);
+    assert.equal((await notifications(s)).policy.perPR['#2'], undefined, 'no empty entry left behind');
+  } finally { await s.close(); }
+});
+
+test('rules through the API: adjust one PR, change a global, change it back: nothing is rewritten and nothing is lost', async () => {
+  const s = await boot([raw(1, 'devon'), raw(2, 'ines')]);
+  try {
+    await putPR(s, '#1', 'pushed', false);                                        // 1. one PR adjusted
+    const before = JSON.stringify((await notifications(s)).policy.perPR);
+    await putGlobal(s, 'ci', false);                                             // 2. a global change
+    let n = await notifications(s);
+    assert.equal(JSON.stringify(n.policy.perPR), before, 'per-PR settings untouched by the global change');
+    assert.deepEqual(n.byPR['#1'], { pushed: { on: false, overridden: true, inherited: true }, re_review: { on: true, overridden: false, inherited: true }, ci: { on: false, overridden: false, inherited: false } }, 'what the PR menu will show for the adjusted PR');
+    assert.deepEqual(n.byPR['#2'], { pushed: { on: true, overridden: false, inherited: true }, re_review: { on: true, overridden: false, inherited: true }, ci: { on: false, overridden: false, inherited: false } }, 'and for one nobody touched: it just follows the new default');
+    await putGlobal(s, 'ci', true);                                              // 3. changed back
+    n = await notifications(s);
+    assert.equal(JSON.stringify(n.policy.perPR), before);
+    assert.equal(n.byPR['#1'].ci.on, true); assert.equal(n.byPR['#1'].pushed.on, false, 'the PR kept its own mute');
+  } finally { await s.close(); }
+});
+
+test('rules through the API: events that happen while a kind is off are dropped, not saved up, and switching it on again announces nothing old', async () => {
+  const s = await boot([raw(1, 'devon'), raw(2, 'ines')]);
+  try {
+    await putGlobal(s, 'ci', false);
+    s.app.setPRs(feedOf({ 1: { status: 'ci_failing' }, 2: {} }));
+    assert.deepEqual(await s.inbox(), [], 'dropped while off');
+    await putGlobal(s, 'ci', true);
+    s.app.setPRs(feedOf({ 1: { status: 'ci_failing' }, 2: {} }));                 // the same feed again
+    assert.deepEqual(await s.inbox(), [], 'switching it back on does not replay what was missed');
+    s.app.setPRs(feedOf({ 1: { status: 'review_requested' }, 2: {} }));            // new news after that is announced
+    assert.deepEqual((await s.inbox()).map((e) => e.event), ['ci_passed']);
+    await putGlobal(s, 'pushed', false);
+    s.app.setPRs(feedOf({ 1: { status: 'review_requested', sha: 'x1' }, 2: { sha: 'x2' } }));
+    assert.deepEqual((await s.inbox()).map((e) => e.event), ['ci_passed'], 'earlier notifications are untouched by a policy change');
+  } finally { await s.close(); }
+});
+
+test('rules through the API: nothing by default, everything for one PR', async () => {
+  const s = await boot([raw(1, 'devon'), raw(2, 'ines')]);
+  try {
+    for (const k of ['pushed', 're_review', 'ci']) await putGlobal(s, k, false);
+    assert.equal((await putPR(s, '#1', 'all', true)).status, 200, 'the shortcut');
+    assert.deepEqual((await notifications(s)).policy.perPR['#1'], { pushed: true, re_review: true, ci: true });
+    s.app.setPRs(feedOf({ 1: { status: 're_review', sha: 'z1' }, 2: { status: 're_review', sha: 'z2' } }));
+    assert.deepEqual((await s.inbox()).map((e) => [e.prId, e.event]).sort(), [['#1', 're_review'], ['#1', 'pushed']].sort());
+  } finally { await s.close(); }
+});
+
+test('the snapshot says what every PR will do and whether that is its own choice', async () => {
+  const s = await boot([raw(1, 'devon'), raw(2, 'ines')]);
+  try {
+    const n = await notifications(s);
+    assert.deepEqual(Object.keys(n.byPR).sort(), ['#1', '#2'], 'every tracked PR');
+    assert.ok(Object.values(n.byPR).every((r) => Object.values(r).every((k) => k.on && !k.overridden)), 'by default: all on, none overridden');
+    await putPR(s, '#2', 'ci', false);
+    assert.deepEqual((await notifications(s)).byPR['#2'].ci, { on: false, overridden: true, inherited: true });
   } finally { await s.close(); }
 });
 

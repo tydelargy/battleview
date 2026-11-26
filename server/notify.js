@@ -7,8 +7,12 @@
 //   ci          CI went red (ci_failed) or recovered (ci_passed)
 // A PR seen for the first time produces nothing, so starting up or tracking a PR never floods you.
 //
-// Policy: the global switches apply to everything, your own PRs included. A per-PR mute applies only to other
-// people's PRs: your own never need muting, and a stale mute can never hide news about your own work.
+// Policy, two layers and one rule for every PR (yours included):
+//   global     one switch per kind, the default for every PR
+//   per PR     each kind can be overridden on or off for one PR; unset means "follow the global switch"
+// An override wins over the global switch in both directions, so "nothing by default, but tell me everything about
+// this PR" works. Changing a global switch never touches a PR's overrides, and unsetting an override puts the PR
+// back on whatever the global switch says at that moment. Nothing is ever copied from one layer into the other.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -43,15 +47,16 @@ const TEXT = {
 
 export const DEFAULT_POLICY = () => ({ global: { pushed: true, re_review: true, ci: true }, perPR: {} });
 
-/** Should this event reach the inbox? Global switch first (it covers your own PRs too), then the per-PR mute for other people's. */
-export function shouldNotify(ev, pr, policy) {
-  if (!policy.global[ev.kind]) return false;
-  if (pr.mine) return true;
-  const o = policy.perPR[pr.id];
-  if (!o) return true;
-  if (o.all === false) return false;
-  return o[ev.kind] !== false;
+/** One kind for one PR: `on` is what will happen, `overridden` says whether the PR sets it itself, `inherited` is the global switch (what it would follow). */
+export function effective(policy, prId, kind) {
+  const o = policy.perPR[prId]?.[kind], inherited = !!policy.global[kind];
+  return typeof o === 'boolean' ? { on: o, overridden: true, inherited } : { on: inherited, overridden: false, inherited };
 }
+/** All three kinds for one PR, for the PR's notification menu. */
+export const resolveFor = (policy, prId) => Object.fromEntries(KINDS.map((k) => [k, effective(policy, prId, k)]));
+
+/** Should this event reach the inbox? The PR's own override if it has one for this kind, otherwise the global switch. Mine or not makes no difference. */
+export const shouldNotify = (ev, pr, policy) => effective(policy, pr.id, ev.kind).on;
 
 /** Events for every tracked PR that was already tracked before. `prevLive` and `nextLive` are arrays of PRs; pure. */
 export function eventsFor(prevLive, nextLive, policy, { now = new Date().toISOString(), nextId = (() => { let n = 0; return () => `${now}-${++n}`; })() } = {}) {
@@ -78,7 +83,8 @@ export class NotifyStore {
       for (const k of KINDS) if (raw.policy?.global && typeof raw.policy.global[k] === 'boolean') d.policy.global[k] = raw.policy.global[k];
       for (const [id, o] of Object.entries(raw.policy?.perPR || {})) {
         const clean = {};
-        for (const k of [...KINDS, 'all']) if (o && typeof o[k] === 'boolean') clean[k] = o[k];
+        // an older version stored an "all" override as well; fold it into the kinds it did not set itself, so nothing changes meaning
+        for (const k of KINDS) { if (o && typeof o[k] === 'boolean') clean[k] = o[k]; else if (o && typeof o.all === 'boolean') clean[k] = o.all; }
         if (Object.keys(clean).length) d.policy.perPR[id] = clean;
       }
       d.inbox = (Array.isArray(raw.inbox) ? raw.inbox : []).filter((e) => e && e.id && e.kind && e.text).slice(-MAX_INBOX);
@@ -101,11 +107,11 @@ export class NotifyStore {
     if (!KINDS.includes(kind) || typeof enabled !== 'boolean') return { ok: false, error: `kind must be one of ${KINDS.join(', ')} and enabled true or false` };
     this.data.policy.global[kind] = enabled; this.save(); return { ok: true };
   }
-  /** Mute or unmute one PR (others' PRs only matter, but the choice is stored either way). `enabled` null removes the override. kind 'all' is every kind. */
+  /** Override one kind for one PR: true (always tell me), false (never) or null (back to the global switch). kind 'all' writes all three kinds at once; it is not stored as a setting of its own. */
   setPR(id, kind, enabled) {
     if (!id || ![...KINDS, 'all'].includes(kind) || ![true, false, null].includes(enabled)) return { ok: false, error: 'id, a kind (or "all") and true, false or null are required' };
     const o = { ...(this.data.policy.perPR[id] || {}) };
-    if (enabled === null) delete o[kind]; else o[kind] = enabled;
+    for (const k of kind === 'all' ? KINDS : [kind]) { if (enabled === null) delete o[k]; else o[k] = enabled; }
     if (Object.keys(o).length) { this.data.policy.perPR[id] = o; } else delete this.data.policy.perPR[id];
     const ids = Object.keys(this.data.policy.perPR);
     if (ids.length > MAX_PR_RULES) delete this.data.policy.perPR[ids[0]];

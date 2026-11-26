@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { detectEvents, shouldNotify, eventsFor, pushed, NotifyStore, DEFAULT_POLICY, KINDS } from '../server/notify.js';
+import { detectEvents, shouldNotify, effective, resolveFor, eventsFor, pushed, NotifyStore, DEFAULT_POLICY, KINDS } from '../server/notify.js';
 
 const pr = (id, o = {}) => ({ id, number: Number(id.slice(1)), title: `Title ${id}`, author: 'maya', status: 'review_requested', mine: false, headSha: 'aaa', adds: 10, dels: 2, files: [{ path: 'a.ts', add: 10, del: 2 }], ...o });
 const pol = (o = {}) => ({ ...DEFAULT_POLICY(), ...o });
@@ -43,21 +43,93 @@ test('detectEvents: a push that turns CI red or asks for re-review is two events
   assert.deepEqual(detectEvents(pr('#1', { status: 'merged' }), pr('#1')), []);
 });
 
-test('shouldNotify: global switches cover everyone; per-PR mutes cover only other people', () => {
-  const ev = (kind) => ({ kind });
-  assert.equal(shouldNotify(ev('ci'), pr('#1'), pol()), true);
-  const off = pol(); off.global.ci = false;
-  assert.equal(shouldNotify(ev('ci'), pr('#1'), off), false);
-  assert.equal(shouldNotify(ev('ci'), pr('#1', { mine: true }), off), false, 'a global switch silences your own PRs too');
-  assert.equal(shouldNotify(ev('pushed'), pr('#1'), off), true, 'other kinds are unaffected');
+// ---- the notification rules, as a specification ----------------------------------------------------------------
+// Two layers: a global switch per kind, and an override per kind per PR (on, off or unset). One rule for every PR.
+//   an override wins over the global switch, in both directions; unset follows the global switch right now.
+const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bm-notify-')), 'n.json');
+const kindEv = (kind) => ({ kind });
+const policy = (global, perPR = {}) => ({ global: { pushed: true, re_review: true, ci: true, ...global }, perPR });
 
-  const muted = pol({ perPR: { '#1': { pushed: false }, '#2': { all: false }, '#3': { ci: true, all: false } } });
-  assert.equal(shouldNotify(ev('pushed'), pr('#1'), muted), false);
-  assert.equal(shouldNotify(ev('ci'), pr('#1'), muted), true, 'only the muted kind');
-  assert.equal(shouldNotify(ev('re_review'), pr('#2'), muted), false, 'mute everything for a PR');
-  assert.equal(shouldNotify(ev('ci'), pr('#3'), muted), false, '"all" beats a per-kind yes');
-  assert.equal(shouldNotify(ev('pushed'), pr('#1', { mine: true }), muted), true, 'your own PR ignores a per-PR mute');
-  assert.equal(shouldNotify(ev('re_review'), pr('#2', { mine: true }), muted), true);
+test('rule: unset follows the global switch; an override of either kind beats it (the full truth table, every kind, mine or not)', () => {
+  for (const kind of KINDS) for (const global of [true, false]) for (const override of [undefined, true, false]) for (const mine of [false, true]) {
+    const p = policy({ [kind]: global }, override === undefined ? {} : { '#1': { [kind]: override } });
+    const want = override === undefined ? global : override;
+    assert.equal(shouldNotify(kindEv(kind), pr('#1', { mine }), p), want, `${kind}: global ${global}, override ${override}, mine ${mine}`);
+  }
+});
+
+test('rule: your own PRs follow exactly the same rules as everyone else\'s', () => {
+  const p = policy({ ci: false }, { '#1': { pushed: false }, '#2': { ci: true } });
+  for (const mine of [false, true]) {
+    assert.equal(shouldNotify(kindEv('ci'), pr('#9', { mine }), p), false, 'a global off silences it');
+    assert.equal(shouldNotify(kindEv('pushed'), pr('#1', { mine }), p), false, 'a per-PR mute silences it');
+    assert.equal(shouldNotify(kindEv('ci'), pr('#2', { mine }), p), true, 'a per-PR yes brings it back');
+  }
+});
+
+test('rule: kinds are independent; an override for one never touches the others', () => {
+  const p = policy({ pushed: false, re_review: false, ci: false }, { '#1': { ci: true } });
+  assert.deepEqual(KINDS.map((k) => shouldNotify(kindEv(k), pr('#1'), p)), [false, false, true]);
+  assert.deepEqual(KINDS.map((k) => shouldNotify(kindEv(k), pr('#2'), p)), [false, false, false], 'other PRs still follow the global switches');
+});
+
+test('rule: nothing by default, but tell me everything about this one PR', () => {
+  const p = policy({ pushed: false, re_review: false, ci: false }, { '#7': { pushed: true, re_review: true, ci: true } });
+  const evs = eventsFor([pr('#7'), pr('#8')], [pr('#7', { headSha: 'bbb', status: 're_review' }), pr('#8', { headSha: 'bbb', status: 're_review' })], p, { now: NOW });
+  assert.deepEqual(evs.map((e) => [e.prId, e.event]), [['#7', 'pushed'], ['#7', 're_review']], 'only #7 is heard, #8 follows the silent default');
+  const ci = eventsFor([pr('#7'), pr('#8')], [pr('#7', { status: 'ci_failing' }), pr('#8', { status: 'ci_failing' })], p, { now: NOW });
+  assert.deepEqual(ci.map((e) => [e.prId, e.event]), [['#7', 'ci_failed']]);
+});
+
+test('effective and resolveFor say what will happen and why', () => {
+  const p = policy({ ci: false }, { '#1': { pushed: false, ci: true } });
+  assert.deepEqual(effective(p, '#1', 'pushed'), { on: false, overridden: true, inherited: true }, 'muted here, though the default is on');
+  assert.deepEqual(effective(p, '#1', 'ci'), { on: true, overridden: true, inherited: false }, 'on here, though the default is off');
+  assert.deepEqual(effective(p, '#1', 're_review'), { on: true, overridden: false, inherited: true }, 'no override: follows the default');
+  assert.deepEqual(effective(p, '#2', 'ci'), { on: false, overridden: false, inherited: false }, 'a PR with no entry at all follows the defaults');
+  assert.deepEqual(Object.keys(resolveFor(p, '#1')), KINDS);
+  assert.deepEqual(resolveFor(p, '#2'), { pushed: { on: true, overridden: false, inherited: true }, re_review: { on: true, overridden: false, inherited: true }, ci: { on: false, overridden: false, inherited: false } });
+});
+
+test('store: changing a global switch never touches any PR\'s overrides, and unsetting follows the global switch as it is now', () => {
+  const s = new NotifyStore({ persist: false });
+  s.setPR('#A', 'pushed', false);                                              // 1. adjust one PR
+  const overrides = JSON.stringify(s.get().policy.perPR);
+  s.setGlobal('ci', false);                                                    // 2. then change a global
+  assert.equal(JSON.stringify(s.get().policy.perPR), overrides, 'the per-PR settings are exactly as they were');
+  const now = (id, k) => effective(s.get().policy, id, k).on;
+  assert.deepEqual([now('#A', 'pushed'), now('#A', 'ci'), now('#A', 're_review')], [false, false, true], 'A: its own mute, the new global off, the untouched default');
+  assert.deepEqual([now('#B', 'pushed'), now('#B', 'ci'), now('#B', 're_review')], [true, false, true], 'B never touched: only the global change applies');
+  s.setGlobal('ci', true);                                                     // 3. and back
+  assert.deepEqual([now('#A', 'pushed'), now('#A', 'ci')], [false, true], 'A keeps its mute, and CI returns with the default');
+  assert.equal(JSON.stringify(s.get().policy.perPR), overrides);
+  s.setPR('#A', 'ci', true); s.setGlobal('ci', false);                         // an override outlives a global change in the other direction too
+  assert.equal(now('#A', 'ci'), true, 'a positive override survives the global going off');
+  s.setPR('#A', 'ci', null);
+  assert.equal(now('#A', 'ci'), false, 'unset: back on the default, whatever it is now, not what it was');
+});
+
+test('store: overrides are per kind, null removes one, the "all" shortcut writes every kind and is never stored itself', () => {
+  const s = new NotifyStore({ persist: false });
+  assert.equal(s.setGlobal('nope', true).ok, false); assert.equal(s.setGlobal('ci', 'yes').ok, false);
+  assert.equal(s.setGlobal('ci', false).ok, true); assert.equal(s.get().policy.global.ci, false);
+  assert.equal(s.setPR('#1', 'pushed', false).ok, true); assert.deepEqual(s.get().policy.perPR, { '#1': { pushed: false } });
+  assert.equal(s.setPR('#1', 'ci', true).ok, true); assert.deepEqual(s.get().policy.perPR, { '#1': { pushed: false, ci: true } }, 'positive overrides are stored too');
+  assert.equal(s.setPR('#1', 'all', true).ok, true); assert.deepEqual(s.get().policy.perPR, { '#1': { pushed: true, re_review: true, ci: true } }, 'hear everything about this PR');
+  assert.equal(s.setPR('#1', 'all', false).ok, true); assert.deepEqual(s.get().policy.perPR, { '#1': { pushed: false, re_review: false, ci: false } }, 'mute everything about it');
+  assert.equal(s.setPR('#1', 'pushed', null).ok, true); assert.deepEqual(s.get().policy.perPR, { '#1': { re_review: false, ci: false } });
+  assert.equal(s.setPR('#1', 'all', null).ok, true); assert.deepEqual(s.get().policy.perPR, {}, 'reset to the defaults leaves no empty entry behind');
+  assert.equal(s.setPR('', 'ci', true).ok, false); assert.equal(s.setPR('#1', 'bogus', true).ok, false); assert.equal(s.setPR('#1', 'ci', 'maybe').ok, false);
+});
+
+test('store: an "all" override saved by an older version keeps its meaning (it fills the kinds that PR did not set)', () => {
+  const file = tmp();
+  fs.writeFileSync(file, JSON.stringify({ policy: { global: {}, perPR: { '#1': { all: false }, '#2': { all: false, ci: true }, '#3': { all: true, pushed: false } } } }));
+  const p = new NotifyStore({ file }).get().policy;
+  assert.deepEqual(p.perPR['#1'], { pushed: false, re_review: false, ci: false });
+  assert.deepEqual(p.perPR['#2'], { pushed: false, re_review: false, ci: true }, 'the more specific setting wins, as it does everywhere now');
+  assert.deepEqual(p.perPR['#3'], { pushed: false, re_review: true, ci: true });
+  assert.ok(!Object.values(p.perPR).some((o) => 'all' in o), '"all" is not a stored setting any more');
 });
 
 test('eventsFor: only PRs that were already tracked, honouring the policy, with readable text', () => {
@@ -76,19 +148,7 @@ test('eventsFor: only PRs that were already tracked, honouring the policy, with 
   assert.equal(eventsFor([pr('#1', { status: 'ci_failing' })], [pr('#1', { status: 'review_requested' })], pol(), { now: NOW })[0].text, 'CI is green again on #1 Title #1');
 });
 
-const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bm-notify-')), 'n.json');
 const ev = (id, kind = 'pushed', ts = NOW) => ({ id, ts, kind, event: kind, prId: '#1', title: 't', text: `text ${id}`, mine: false });
-
-test('NotifyStore: policy changes are validated and removing the last override tidies up', () => {
-  const s = new NotifyStore({ persist: false });
-  assert.equal(s.setGlobal('nope', true).ok, false); assert.equal(s.setGlobal('ci', 'yes').ok, false);
-  assert.equal(s.setGlobal('ci', false).ok, true); assert.equal(s.get().policy.global.ci, false);
-  assert.equal(s.setPR('#1', 'pushed', false).ok, true); assert.deepEqual(s.get().policy.perPR, { '#1': { pushed: false } });
-  assert.equal(s.setPR('#1', 'all', false).ok, true);
-  assert.equal(s.setPR('#1', 'pushed', null).ok, true); assert.deepEqual(s.get().policy.perPR, { '#1': { all: false } });
-  assert.equal(s.setPR('#1', 'all', null).ok, true); assert.deepEqual(s.get().policy.perPR, {}, 'no empty entries left behind');
-  assert.equal(s.setPR('', 'ci', true).ok, false); assert.equal(s.setPR('#1', 'bogus', true).ok, false); assert.equal(s.setPR('#1', 'ci', 'maybe').ok, false);
-});
 
 test('NotifyStore: inbox, unread, clear one, clear all, and the cap', () => {
   const s = new NotifyStore({ persist: false });

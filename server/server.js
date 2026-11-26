@@ -6,7 +6,7 @@ import { ConfigStore, redact, normaliseJiraPatch } from './config.js';
 import { createJiraClient, syncJira, JiraError } from './jira/client.js';
 import { buildSnapshot, normalisePRs, extractKey } from './snapshot.js';
 import { WatchStore, classify, reconcileEnded, matchPath, watchedFiles } from './watch.js';
-import { NotifyStore, eventsFor } from './notify.js';
+import { NotifyStore, eventsFor, resolveFor } from './notify.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -76,7 +76,9 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
     const sil = notify.silencedIds(), n = notify.get();
     snap.silenced = snap.insights.filter((i) => sil.has(i.id));
     snap.insights = snap.insights.filter((i) => !sil.has(i.id));
-    snap.notifications = { policy: n.policy, inbox: [...n.inbox].reverse().slice(0, 100), total: n.inbox.length, unread: notify.unread(), lastSeen: n.lastSeen };
+    // what each PR will actually do, and whether that is its own choice or the default: the PR's bell menu shows it
+    const byPR = Object.fromEntries(snap.prs.map((p) => [p.id, resolveFor(n.policy, p.id)]));
+    snap.notifications = { policy: n.policy, byPR, inbox: [...n.inbox].reverse().slice(0, 100), total: n.inbox.length, unread: notify.unread(), lastSeen: n.lastSeen };
     return snap;
   }
 

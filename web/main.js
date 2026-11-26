@@ -38,7 +38,7 @@ function fill(el, ...kids) {
 }
 const initials = (a) => (a.replace(/[^A-Za-z0-9 ._-]/g, '').split(/[ ._-]+/).filter(Boolean).map((s) => s[0]).join('').slice(0, 2) || a.slice(0, 2)).toUpperCase();
 
-const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, knownNotifs: null, notifBaseline: null, showSilenced: false, wmarks: ls.get('wmarks', true), bstyle: normaliseStyle(ls.get('bstyle', null)) };
+const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, knownNotifs: null, notifBaseline: null, showSilenced: false, nprOpen: false, wmarks: ls.get('wmarks', true), bstyle: normaliseStyle(ls.get('bstyle', null)) };
 
 /* ---------- scene (optional: the UI still works if WebGL or three is unavailable) ---------- */
 async function startScene() {
@@ -184,7 +184,7 @@ function renderCards() {
 }
 
 function selectPR(id, fly = true) {
-  state.sel = id; state.transitions = null;
+  state.sel = id; state.transitions = null; state.nprOpen = false;
   renderCards(); renderFocus(); applyScene();
   if (id && fly) state.scene?.flyToPR(id); else if (!id && fly) state.scene?.flyHome();
   const c = id && document.querySelector(`.card[data-id="${CSS.escape(id)}"]`); if (c) c.scrollIntoView({ inline: 'center', block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -236,9 +236,10 @@ function renderFocus() {
       } }, 'SEND')));
   }
   fill(box,
-    h('button', { class: 'x', 'aria-label': 'Exit focus', onclick: () => selectPR(null) }, 'ESC'),
+    h('button', { class: 'x', 'aria-label': 'Exit focus', onclick: () => selectPR(null) }, 'ESC'), notifyBell(pr),
     h('span', { class: 'pill', style: `--st:${st.color}` }, st.label), ' ', h('span', { class: 'sub' }, `${pr.id} · `, h('button', { class: 'linkish', id: 'onlyAuthor', title: `Show only @${pr.author}`, onclick: () => setFilters({ authors: [pr.author] }) }, `@${pr.author}`)),
     h('h2', null, pr.title),
+    notifyMenu(pr),
     pr.needs ? h('div', { style: 'color:var(--accent)' }, pr.needs) : null,
     pr.ended ? trackingBlock(pr) : null,      // an ended PR's only action is dismissing it, so it goes first
     h('div', { class: 'blk' }, h('h3', null, 'DIFF'),
@@ -253,7 +254,6 @@ function renderFocus() {
     h('div', { class: 'blk' }, h('h3', null, 'JIRA'), ticket),
     actions,
     pr.ended ? null : trackingBlock(pr),
-    notifyBlock(pr),
     pr.url ? h('div', { class: 'blk' }, h('a', { href: pr.url }, 'Open pull request')) : null);
   const cm = document.getElementById('cmt'); if (cm && draft) { cm.value = draft; if (hadFocus) cm.focus(); }
 }
@@ -293,7 +293,7 @@ function renderNotifs() {
     h('h2', null, `NOTIFICATIONS (${n.total})`, h('span', { class: 'hbtns' }, n.total ? h('button', { class: 'btn', id: 'nt-clear-all', onclick: () => clear() }, 'CLEAR ALL') : null, h('button', { class: 'btn', id: 'nt-close', onclick: () => toggleNotifs(false) }, 'CLOSE'))),
     h('div', { class: 'blk' }, h('h3', null, 'TELL ME ABOUT'),
       NT_POLICY.map(([k, label]) => h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id: `np-${k}`, checked: n.policy.global[k], onchange: (e) => setPolicy(k, e.target.checked) }), label)),
-      h('small', { class: 'sub' }, 'These switches apply to every PR, yours included. To mute one PR, open it and use its notification switches.')),
+      h('small', { class: 'sub' }, 'These are the defaults for every PR, yours included. Any PR can override them: open it and use the bell in its panel.')),
     !n.inbox.length ? h('p', { class: 'sub nt-empty' }, 'No notifications yet. New commits, re-review requests and CI changes on the PRs you track will show up here.') : null,
     n.inbox.map((e) => {
       const [label, color] = NT_KIND[e.event] || [e.kind.toUpperCase(), 'var(--dim)'];
@@ -306,14 +306,39 @@ function renderNotifs() {
     }));
 }
 /** Per-PR switches in the PR panel. Your own PRs have none: they always notify, and only the global policy can quieten them. */
-function notifyBlock(pr) {
+const LOCK = (open) => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '14'); svg.setAttribute('height', '14'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+  const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect'); r.setAttribute('x', '5'); r.setAttribute('y', '11'); r.setAttribute('width', '14'); r.setAttribute('height', '9'); r.setAttribute('rx', '2');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', open ? 'M8 11V8a4 4 0 0 1 7.5-2' : 'M8 11V8a4 4 0 0 1 8 0v3'); svg.append(r, p); return svg; };
+const BELL = () => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '15'); svg.setAttribute('height', '15'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8'); svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', 'M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7M10 20a2 2 0 0 0 4 0'); svg.append(p); return svg; };
+/**
+ * The bell on a PR's panel and the small menu it opens. Each kind shows what will happen. Greyed means "following the
+ * default" from the bell panel, and shows that default; the lock beside it unlocks an override for this PR (on or
+ * off, either way beating the default). Locking it again removes the override.
+ */
+function notifyBell(pr) {
   if (pr.ended) return null;
-  if (pr.mine) return h('div', { class: 'blk' }, h('h3', null, 'NOTIFICATIONS'), h('p', { class: 'sub', id: 'npr-mine' }, 'Your own PRs always notify. To quieten a kind everywhere, use the switches in the bell panel.'));
-  const o = state.snap.notifications.policy.perPR[pr.id] || {}, set = (kind, on) => api.send('PUT', '/api/notify/pr', { id: pr.id, kind, enabled: on ? null : false }).then(refresh);
-  const row = (kind, label) => h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id: `npr-${kind}`, checked: o.all !== false && o[kind] !== false, disabled: o.all === false, onchange: (e) => set(kind, e.target.checked) }), label);
-  return h('div', { class: 'blk' }, h('h3', null, 'NOTIFICATIONS'),
-    h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id: 'npr-all', checked: o.all !== false, onchange: (e) => set('all', e.target.checked) }), 'Tell me about this PR'),
-    row('pushed', 'New commits'), row('re_review', 'Re-review requests'), row('ci', 'CI status'));
+  const eff = state.snap.notifications.byPR?.[pr.id], any = eff && NT_POLICY.some(([k]) => eff[k]?.overridden);
+  return h('button', { class: 'x bellpr' + (any ? ' has' : ''), id: 'npr-bell', 'aria-label': 'Notifications for this PR', 'aria-expanded': String(state.nprOpen), title: any ? 'This PR has its own notification settings' : 'Notifications for this PR (following the defaults)', onclick: () => { state.nprOpen = !state.nprOpen; renderFocus(); } }, BELL());
+}
+function notifyMenu(pr) {
+  if (pr.ended || !state.nprOpen) return null;
+  const eff = state.snap.notifications.byPR?.[pr.id]; if (!eff) return null;
+  const call = (kind, enabled) => api.send('PUT', '/api/notify/pr', { id: pr.id, kind, enabled }).then(refresh);
+  const row = ([kind, label]) => {
+    const e = eff[kind];
+    return h('div', { class: 'nprow' + (e.overridden ? ' ovr' : '') },
+      h('label', { class: 'tgl' }, h('input', { type: 'checkbox', id: `npr-${kind}`, checked: e.on, disabled: !e.overridden, onchange: (ev) => call(kind, ev.target.checked) }), label),
+      h('span', { class: 'dflt', id: `npr-${kind}-note` }, e.overridden ? `own setting (default: ${e.inherited ? 'on' : 'off'})` : `default: ${e.inherited ? 'on' : 'off'}`),
+      h('button', { class: 'lock', id: `npr-${kind}-lock`, 'aria-pressed': String(e.overridden), 'aria-label': `${e.overridden ? 'Use the default for' : 'Override the default for'} ${label}`, title: e.overridden ? 'Overridden for this PR. Click to follow the default again' : 'Following the default. Click to override it for this PR', onclick: () => call(kind, e.overridden ? null : e.on) }, LOCK(e.overridden)));
+  };
+  return h('div', { class: 'nprmenu', id: 'npr-menu', role: 'group', 'aria-label': 'Notifications for this PR' },
+    h('div', { class: 'sub' }, 'Greyed means following the defaults in the bell panel. Unlock a row to set it for this PR only.'),
+    NT_POLICY.map(row),
+    h('div', { class: 'act' },
+      h('button', { class: 'btn', id: 'npr-all-on', onclick: () => call('all', true) }, 'HEAR EVERYTHING'),
+      h('button', { class: 'btn', id: 'npr-all-off', onclick: () => call('all', false) }, 'MUTE ALL'),
+      h('button', { class: 'btn', id: 'npr-reset', onclick: () => call('all', null) }, 'RESET')));
 }
 
 /* ---------- layers (view + spire options) ---------- */
@@ -691,7 +716,7 @@ $('settingsBtn').onclick = () => openSettings('jira');
 addEventListener('keydown', (e) => {
   if (e.key === '/' && modal.hidden && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) { e.preventDefault(); toggleFilters(true); $('f-q')?.focus(); return; }
   if (e.key !== 'Escape') return;
-  if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('filters').hidden) toggleFilters(false); else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('notifs').hidden) toggleNotifs(false); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.sel) selectPR(null);
+  if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('filters').hidden) toggleFilters(false); else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('notifs').hidden) toggleNotifs(false); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.nprOpen) { state.nprOpen = false; renderFocus(); } else if (state.sel) selectPR(null);
 });
 window.battlemap = { state, selectPR, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
 

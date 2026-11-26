@@ -156,11 +156,13 @@ Each shows what happened, to which PR and when; click one to jump to the PR. A b
 
 Notifications are worked out on the server by comparing each tracked PR with how it was last time, so they keep arriving while the browser is closed, and a change that happened while the server was down is announced when it starts. A PR seen for the first time, or a restart where nothing changed, announces nothing.
 
-**You decide what you hear about.** The three switches at the top of the panel are a global policy: they apply to everything, your own PRs included. To quieten one PR, open it and use its notification switches (mute it entirely, or just one kind). Your own PRs have no per-PR switches: they always notify, so a stale mute can never hide news about your own work.
+![A PR's notification menu: re-review follows the default (off, greyed), CI is overridden](docs/screenshots/notify-pr.png)
+
+**You decide what you hear about, in two layers, with one rule for every PR (yours included).** The three switches at the top of the bell panel are the **defaults**: new commits, re-review requests and CI status. Any PR can **override** each kind for itself: open the PR and use the bell in its panel. Each kind there shows what will happen; a greyed row means it is following the default (and shows that default), and the lock beside it unlocks an override that you can then set on or off. An override wins over the default in both directions, so you can turn everything off by default and still hear everything about one PR (**Hear everything**, **Mute all** and **Reset** are shortcuts for all three kinds). A few things always hold: changing a default never changes any PR's overrides, locking a row again puts the PR back on whatever the default is at that moment, and an event that happens while a kind is off is dropped, not saved up, so switching it back on never replays old news.
 
 **Alerts** (the flag icon: ticket Done but PR open, PR with no ticket, and the rest) can be silenced one at a time with the ✕, or all at once. Silenced alerts move to a list you can reopen to restore them. That is the way to stop seeing, say, "no ticket key" on a PR that will never have one.
 
-Notifications, mutes and silenced alerts are saved next to the config as `config.notify.json` (mode 0600), except under `--mock-jira`. Desktop (system) notifications are not part of this; it is in-app only.
+Notifications, your defaults and per-PR overrides, and silenced alerts are saved next to the config as `config.notify.json` (mode 0600), except under `--mock-jira`. Desktop (system) notifications are not part of this; it is in-app only.
 
 ## Running it for real
 

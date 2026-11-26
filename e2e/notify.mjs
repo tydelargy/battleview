@@ -67,6 +67,16 @@ async function expectCount(sel, n, what) {
   try { await page.waitForFunction(([q, x]) => document.querySelectorAll(q).length === x, [sel, n], { timeout: 6000 }); }
   catch { throw new Error(`${what}: expected ${n} of ${sel} but there are ${await page.$$eval(sel, (e) => e.length)}`); }
 }
+// a PR's bell menu: the defaults show greyed, a lock unlocks an override for that PR
+const openMenu = async () => { if (!(await page.isVisible('#npr-menu'))) { await page.click('#npr-bell'); await page.waitForSelector('#npr-menu'); } };
+const rowState = (k) => page.evaluate((kk) => ({ on: document.getElementById(`npr-${kk}`).checked, greyed: document.getElementById(`npr-${kk}`).disabled, overridden: document.getElementById(`npr-${kk}-lock`).getAttribute('aria-pressed') === 'true', note: document.getElementById(`npr-${kk}-note`).textContent }), k);
+async function expectRow(k, want, what) {
+  try { await page.waitForFunction(([kk, w]) => { const c = document.getElementById(`npr-${kk}`), l = document.getElementById(`npr-${kk}-lock`), n = document.getElementById(`npr-${kk}-note`); return c && c.checked === w.on && c.disabled === !w.overridden && (l.getAttribute('aria-pressed') === 'true') === w.overridden && n.textContent.includes(w.note); }, [k, want], { timeout: 6000 }); }
+  catch { throw new Error(`${what}: row ${k} expected ${JSON.stringify(want)} but is ${JSON.stringify(await rowState(k))}`); }
+}
+const focusPR = async (n) => { const sel = `.card[data-id="#${n}"]`; if ((await page.getAttribute(sel, 'aria-pressed')) !== 'true') await page.click(sel); await openMenu(); };
+const unlock = async (k) => { await page.click(`#npr-${k}-lock`); await page.waitForFunction((kk) => !document.getElementById(`npr-${kk}`).disabled, k); };
+const relock = async (k) => { await page.click(`#npr-${k}-lock`); await page.waitForFunction((kk) => document.getElementById(`npr-${kk}`).disabled, k); };
 const quiet = (ms = 1200) => page.waitForTimeout(ms);   // long enough for the feed watcher and the browser to have reacted, to prove nothing happened
 
 try {
@@ -121,33 +131,41 @@ try {
     writeFeed({ 302: { sha: 'b2' }, 304: { status: 're_review' }, 303: { status: 'review_requested' } });   // #306 leaves again
   });
 
-  await step('your own PRs notify too, and have no per-PR mute to forget about', async () => {
+  await step('your own PRs notify, and can be overridden exactly like anyone else\'s', async () => {
     writeFeed({ 301: { sha: 'a2' }, 302: { sha: 'b2' }, 304: { status: 're_review' }, 303: { status: 'review_requested' } });
     await expectBell(1, 'own push');
-    await page.click('.card[data-id="#301"]');
-    assert.equal(await page.isVisible('#npr-mine'), true, 'a note instead of switches');
-    assert.match(await page.textContent('#npr-mine'), /always notify/);
-    assert.equal(await page.$('#npr-pushed'), null);
-    await page.keyboard.press('Escape');
     await openBell(); assert.match((await texts())[0], /New commits on #301/); await closeBell();
+    await page.click('.card[data-id="#301"]'); await openMenu();
+    await expectRow('pushed', { on: true, overridden: false, note: 'default: on' }, 'your own PR follows the defaults too');
+    await unlock('pushed'); await page.uncheck('#npr-pushed');
+    await expectRow('pushed', { on: false, overridden: true, note: 'own setting' }, 'muted for this PR');
+    writeFeed({ 301: { sha: 'a3' }, 302: { sha: 'b2' }, 304: { status: 're_review' }, 303: { status: 'review_requested' } }); await quiet();
+    await expectBell(0, 'a muted push on your own PR is quiet');
+    writeFeed({ 301: { sha: 'a2' }, 302: { sha: 'b2' }, 304: { status: 're_review' }, 303: { status: 'review_requested' } }); await quiet();   // back to the feed the later steps expect, still muted
+    await relock('pushed'); await expectRow('pushed', { on: true, overridden: false, note: 'default: on' }, 'back on the default');
+    await page.keyboard.press('Escape'); assert.equal(await page.isVisible('#npr-menu'), false, 'Escape closes the menu first'); assert.equal(await page.isVisible('#focus'), true);
+    await page.keyboard.press('Escape');
   });
 
-  await step('mute one PR for one kind, then for everything; other PRs are unaffected; unmute brings it back', async () => {
+  await step('override one PR for one kind, then for everything; other PRs are unaffected; resetting brings it back', async () => {
     const S = { 301: { sha: 'a2' }, 302: { sha: 'b2' }, 304: { status: 're_review' }, 303: { status: 'review_requested' } };
-    await page.click('.card[data-id="#305"]');
-    await page.uncheck('#npr-pushed');
-    await page.waitForFunction(() => !document.getElementById('npr-pushed').checked);
+    await page.click('.card[data-id="#305"]'); await openMenu();
+    await unlock('pushed'); await page.uncheck('#npr-pushed');
+    await expectRow('pushed', { on: false, overridden: true, note: 'default: on' }, 'a push mute');
+    await expectRow('ci', { on: true, overridden: false, note: 'default: on' }, 'the other kinds still follow the defaults');
     writeFeed({ ...S, 305: { sha: 'e2' } }); await quiet();
-    await expectBell(0, 'a muted kind on a muted PR');
+    await expectBell(0, 'a muted kind on an overridden PR');
     writeFeed({ ...S, 305: { sha: 'e2' }, 302: { sha: 'b3' } });
     await expectBell(1, 'but #302 still notifies');
-    await page.check('#npr-pushed'); await page.uncheck('#npr-all');
+    await page.click('#npr-all-off');
+    await expectRow('ci', { on: false, overridden: true, note: 'own setting' }, 'MUTE ALL writes every kind');
     writeFeed({ ...S, 305: { sha: 'e2', status: 'ci_failing' }, 302: { sha: 'b3' } }); await quiet();
     await expectBell(1, 'muted everything: even CI is quiet');
-    await page.check('#npr-all');
+    await page.click('#npr-reset');
+    await expectRow('pushed', { on: true, overridden: false, note: 'default: on' }, 'RESET puts every kind back on the defaults');
     writeFeed({ ...S, 305: { sha: 'e3', status: 'ci_failing' }, 302: { sha: 'b3' } });
-    await expectBell(2, 'unmuted: the push is announced again');
-    await page.keyboard.press('Escape');
+    await expectBell(2, 'reset: the push is announced again');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     writeFeed({ ...S, 305: { sha: 'e3' }, 302: { sha: 'b3' } });   // CI recovers
     await expectBell(3, 'CI recovered on #305');
   });
@@ -166,6 +184,33 @@ try {
     await expectBell(before + 1, 'switched back on: announced again');
     writeFeed(S);                                                              // CI recovers: one more, announced a moment later
     await expectBell(before + 2, 'and its recovery');
+  });
+
+  await step('a PR\'s bell shows the global default greyed, and a positive override beats a default that is off', async () => {
+    const S = { 301: { sha: 'a2' }, 302: { sha: 'b3' }, 304: { status: 're_review' }, 303: { status: 'review_requested' }, 305: { sha: 'e3' } };
+    await openBell(); await page.uncheck('#np-ci'); await closeBell();
+    await focusPR(302);
+    await expectRow('ci', { on: false, overridden: false, note: 'default: off' }, 'the PR menu shows the global default, greyed');
+    await expectRow('pushed', { on: true, overridden: false, note: 'default: on' }, 'greyed on');
+    assert.equal(await page.getAttribute('#npr-bell', 'title'), 'Notifications for this PR (following the defaults)');
+    await unlock('ci'); await page.check('#npr-ci');                       // hear CI about this PR even though CI is off everywhere else
+    await expectRow('ci', { on: true, overridden: true, note: 'default: off' }, 'a positive override');
+    assert.match(await page.getAttribute('#npr-bell', 'title'), /own notification settings/);
+    const before = await bell();
+    writeFeed({ ...S, 302: { sha: 'b3', status: 'ci_failing' }, 304: { status: 'ci_failing' } });
+    await expectBell(before + 1, 'only #302, which asked to hear CI; #304 follows the default and is quiet');
+    await openBell(); assert.match((await texts())[0], /CI failed on #302/); assert.equal((await texts()).filter((t) => /#304/.test(t) && /CI/.test(t)).length, 0); await closeBell();
+    // a global change does not touch the override, and unlocking returns the PR to whatever the default is now
+    await openBell(); await page.check('#np-ci'); await closeBell();
+    await focusPR(302);
+    await expectRow('ci', { on: true, overridden: true, note: 'own setting' }, 'the override survived the global change');
+    await openBell(); await page.uncheck('#np-ci'); await closeBell();
+    await focusPR(302);
+    await expectRow('ci', { on: true, overridden: true, note: 'default: off' }, 'and again');
+    await relock('ci'); await expectRow('ci', { on: false, overridden: false, note: 'default: off' }, 'unlocked back to the default as it is now, not as it was');
+    await openBell(); await page.check('#np-ci'); await closeBell();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    writeFeed(S); await quiet();                                              // CI recovers everywhere; the next step reads the list
   });
 
   await step('clear one, then clear all', async () => {
@@ -191,10 +236,10 @@ try {
     writeFeed({ ...NOW_STATE, 302: { sha: 'b9' } });
   });
 
-  await step('restart: the list, the unread count, the policy and the per-PR mutes survive, and the restart itself announces nothing', async () => {
+  await step('restart: the list, the unread count, the policy and the per-PR overrides survive, and the restart itself announces nothing', async () => {
     writeFeed({ ...NOW_STATE, 302: { sha: 'b10' } }); await expectBell(1, 'one to keep');
     await openBell(); await page.uncheck('#np-re_review'); await closeBell();
-    await page.click('.card[data-id="#305"]'); await page.uncheck('#npr-ci'); await page.keyboard.press('Escape');
+    await page.click('.card[data-id="#305"]'); await openMenu(); await unlock('ci'); await page.uncheck('#npr-ci'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
     await stopServer();
     writeFeed({ ...NOW_STATE, 302: { sha: 'b10' }, 304: { status: 'ci_failing' } });          // a change while we were down: 304 goes red, 302 unchanged
@@ -205,8 +250,9 @@ try {
     await expectTexts(['CI failed on #304 Work item 304', 'New commits on #302 Work item 302 (+10 −2)'], 'after restart');
     assert.equal(await page.isChecked('#np-re_review'), false, 'policy persisted'); assert.equal(await page.isChecked('#np-pushed'), true);
     await page.check('#np-re_review'); await closeBell();
-    await page.click('.card[data-id="#305"]'); assert.equal(await page.isChecked('#npr-ci'), false, 'per-PR mute persisted'); assert.equal(await page.isChecked('#npr-pushed'), true);
-    await page.check('#npr-ci'); await page.keyboard.press('Escape');
+    await page.click('.card[data-id="#305"]'); await openMenu();
+    await expectRow('ci', { on: false, overridden: true, note: 'own setting' }, 'the override persisted'); await expectRow('pushed', { on: true, overridden: false, note: 'default: on' }, 'and the others still follow the defaults');
+    await page.click('#npr-reset'); await expectRow('ci', { on: true, overridden: false, note: 'default: on' }, 'reset'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     const snap = await fetch(`${base}/api/snapshot`).then((r) => r.json());
     assert.equal(snap.notifications.inbox.length, 2, 'the restart itself added nothing');
   });
