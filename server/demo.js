@@ -70,10 +70,11 @@ const STORE_OLD = () => tree({
   'src/utils': { 'format.ts': 90 }, 'src/lib': { 'http.ts': 150 }, 'src/legacy': { 'oldCheckout.ts': 210 },
   'src/catalog': { 'Catalog.tsx': 340, 'Product.tsx': 280, 'search.ts': 200 }, 'src/account': { 'Login.tsx': 180, 'Profile.tsx': 220 }, config: { 'build.ts': 70 }, test: { 'cart.test.ts': 220 },
 });
-const STORE_AT = { [BRANCHED]: STORE_OLD, [RELEASE]: () => [...STORE_OLD(), ...tree({ 'src/catalog/v2': { 'search.ts': 160, 'index.ts': 40 } })], 'you/filters': () => [...STORE, ...tree({ 'src/catalog': { 'filters.ts': 140 } })] };
+const STORE_RELEASE = () => [...STORE_OLD(), ...tree({ 'src/catalog/v2': { 'search.ts': 160, 'index.ts': 40 } })];
+const STORE_AT = { [BRANCHED]: STORE_OLD, [RELEASE]: STORE_RELEASE, 'release/2.x': STORE_RELEASE, 'you/filters': () => [...STORE, ...tree({ 'src/catalog': { 'filters.ts': 140 } })] };
 const mv = (to) => ({ change: 'moved', to }), gone = { change: 'removed' }, edited = { change: 'modified' }, both = { change: 'added' };
 const sf = (file, since) => ({ ...file, since });   // a PR file, plus what the target did to it since the PR branched
-const stale = (ref, behind, mergeState) => ({ base: { ref, mergeable: mergeState === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE', mergeState, behind, ...(behind > 0 ? { mergeBase: ref === 'main' ? BRANCHED : RELEASE } : {}) } });   // what GitHub says
+const stale = (ref, behind, mergeState, extra = {}) => ({ base: { ref, mergeable: mergeState === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE', mergeState, behind, ...(behind > 0 ? { mergeBase: ref === 'main' ? BRANCHED : RELEASE } : {}), ...extra } });   // what GitHub says
 const STORE_PRS = () => [
   pr(300, 'Control: edit a product page (up to date)', 'you', 'review_requested', [f('src/catalog/Product.tsx', 44, 12)], 3, undefined, stale('main', 0, 'CLEAN')),
   pr(301, 'Promo codes: edit the cart (cart moved on main)', 'you', 'review_requested', [sf(f('src/cart/Cart.tsx', 60, 14), mv('src/checkout/cart/Cart.tsx')), sf(f('src/cart/totals.ts', 22, 6), mv('src/checkout/cart/totals.ts'))], 6, undefined, stale('main', 41, 'DIRTY')),
@@ -86,6 +87,8 @@ const STORE_PRS = () => [
   pr(308, 'Backport search fix to the 2.x release', 'maya', 'review_requested', [sf(f('src/catalog/search.ts', 30, 8), edited), f('src/catalog/v2/search.ts', 110, 0, 'added'), f('src/catalog/v2/index.ts', 12, 0, 'added')], 50, undefined, stale('release/2.x', 260, 'CLEAN')),
   pr(309, 'New search filters', 'you', 'review_requested', [f('src/catalog/filters.ts', 140, 0, 'added'), f('src/catalog/search.ts', 26, 5)], 8, 'you/filters', stale('main', 0, 'CLEAN')),
   pr(310, 'Filter chips (stacked on #309)', 'you', 'draft', [f('src/catalog/filters.ts', 34, 6), f('src/catalog/Catalog.tsx', 28, 4)], 4, undefined, stale('you/filters', 0, 'CLEAN')),
+  pr(311, 'Promo tweak: behind main, merges cleanly', 'you', 'review_requested', [sf(f('src/cart/promo.ts', 12, 3), mv('src/checkout/cart/promo.ts')), sf(f('src/legacy/oldCheckout.ts', 9, 4), gone), f('src/account/Login.tsx', 14, 2)], 5, undefined, stale('main', 12, 'BEHIND')),
+  pr(312, 'Giant refactor, long behind: too much changed to read', 'devon', 'review_requested', [f('src/catalog/Catalog.tsx', 220, 90), f('src/account/Profile.tsx', 60, 20)], 70, undefined, stale('main', 900, 'DIRTY', { sinceCut: true })),
 ];
 const REPOS = {
   'acme/platform': { files: sampleFiles, prs: samplePRs, description: 'The monolith (the built-in sample)', estimated: false },

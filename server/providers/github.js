@@ -290,8 +290,10 @@ export function sinceFromCompare(files, paths) {
 export async function addSince(prs, { repo, host = null, gh = 'gh', exec = defaultExec, limit = SINCE_LIMIT } = {}) {
   const warnings = [], env = host ? { GH_HOST: host } : {}, behind = prs.filter((p) => p.base?.behind > 0 && SHA.test(p.headSha || '') && p.files?.length && !['merged', 'closed'].includes(p.status));
   const looked = behind.slice(0, limit); if (behind.length > looked.length) warnings.push(`what the target changed since the branch point was read for ${looked.length} of ${behind.length} PRs that are behind`);
-  if (!looked.length) return warnings;
-  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { return [...warnings, `could not read what targets changed: ${e.message.split('\n')[0]}`]; }
+  // a PR that is behind and whose list we did not read (past the cap, a failed call, no commit to ask about) is marked: the map must not guess for it
+  const read = new Set(), unknown = () => { for (const p of prs) if (p.base?.behind > 0 && p.files?.length && !['merged', 'closed'].includes(p.status) && !read.has(p)) p.base.sinceUnknown = true; };
+  if (!looked.length) { unknown(); return warnings; }
+  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { unknown(); return [...warnings, `could not read what targets changed: ${e.message.split('\n')[0]}`]; }
   let failed = 0, next = 0;
   const one = async (p) => {
     const text = await exec(gh, ['api', `repos/${owner}/${name}/compare/${p.headSha}...${encodeURIComponent(p.base.ref)}`, '--jq', '{mergeBase: .merge_base_commit.sha, files: [.files[]? | {filename, status, previous_filename}]}'], { env });
@@ -300,8 +302,10 @@ export async function addSince(prs, { repo, host = null, gh = 'gh', exec = defau
     const since = sinceFromCompare(files, p.files.map((f) => f.from || f.path));
     for (const f of p.files) { const s = since.get(f.from || f.path); if (s) f.since = s; }
     if (files.length >= SINCE_FILES) p.base.sinceCut = true;
+    read.add(p);
   };
   await Promise.all(Array.from({ length: Math.min(SINCE_PARALLEL, looked.length) }, async () => { while (next < looked.length) { const p = looked[next++]; try { await one(p); } catch { failed++; } } }));
+  unknown();
   if (failed) warnings.push(`could not read what the target changed for ${failed} PR${failed > 1 ? 's' : ''}`);
   return warnings;
 }

@@ -84,16 +84,34 @@ try {
     assert.deepEqual((await world()).cities.map((c) => `${c.key}@${c.q},${c.r}`).sort(), before);
   });
 
-  await step('a PR on an old base says so, quietly: how far behind, that it conflicts, and what the target did to its files', async () => {
+  await step('PRs on other bases: the right map for each, a big banner when the base changes, a choice only where there is one, and a clear message where nothing can be drawn', async () => {
     const w = await world(); await addAt(w.slots[0], 'acme/storefront'); await waitFor(() => window.battlemap.world.info().cities === 4, null, 'storefront appears');
     const c = (await world()).cities.find((x) => x.key === 'acme/storefront'), p = await screen(c);
     await page.mouse.click(p.sx, p.sy); await page.waitForSelector('body.in-city', { timeout: 12000 });
     let n = 0; for (let i = 0; i < 40 && n !== 16; i++) { n = (await fetch(`${base}/r/acme--storefront/api/snapshot`).then((r) => r.json())).files.length; if (n !== 16) await new Promise((r) => setTimeout(r, 200)); } assert.equal(n, 16, 'its map');
-    await fetch(`${base}/r/acme--storefront/api/watch/pick`, { method: 'POST', headers: { 'X-Battlemap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: '#301' }) });
-    await page.waitForSelector('.card[data-id="#301"]', { timeout: 12000 }); await page.click('.card[data-id="#301"]'); await page.waitForSelector('#focus [data-base-note]');
-    const notes = await page.$$eval('#focus [data-base-note]', (n) => n.map((x) => x.textContent)); assert.deepEqual(notes, ['41 commits behind main', 'Conflicts with main']);
-    assert.deepEqual(await page.$$eval('#focus .chg.warn', (n) => n.map((x) => x.textContent)), ['MOVED ON BASE', 'MOVED ON BASE']);
-    await page.keyboard.press('Escape'); await page.click('.card[data-id="#301"]'); await page.keyboard.press('Escape');
+    for (const ref of ['#301', '#309', '#310', '#311', '#312']) await fetch(`${base}/r/acme--storefront/api/watch/pick`, { method: 'POST', headers: { 'X-Battlemap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) });
+    await page.waitForSelector('.card[data-id="#312"]', { timeout: 12000 });
+    const info = () => page.evaluate(() => window.battlemap.state.scene.info()), banner = () => page.evaluate(() => { const b = document.getElementById('baseBanner'); return { hidden: b.hidden, text: b.textContent, blind: b.classList.contains('blind'), buttons: b.querySelectorAll('button').length }; });
+    // overview: latest main, ghost shells for the old places, and the PRs that cannot be drawn waiting at the side
+    await waitFor(() => window.battlemap.state.scene.info().aside === 2, null, 'two PRs are off the map'); const o = await info(); assert.equal(o.stale, 4, 'four old places, as ghosts'); assert.equal((await banner()).hidden, true, 'no banner on the latest map');
+    await waitFor(() => getComputedStyle(document.querySelector('.bm-asidecap')).display === 'block', null, 'the side column is labelled');
+    // a clean PR that is behind: one view, no choice
+    await page.click('.card[data-id="#311"]'); await page.waitForSelector('#focus [data-view]'); assert.equal(await page.$$eval('#focus [data-pick]', (b) => b.length), 0); assert.equal((await banner()).hidden, true);
+    // behind with a conflict: both views offered, latest main first
+    await page.click('.card[data-id="#301"]'); await page.waitForSelector('#focus [data-pick]'); assert.deepEqual(await page.$$eval('#focus [data-base-note]', (x) => x.map((e) => e.textContent)), ['41 commits behind main', 'Conflicts with main']);
+    assert.equal(await page.getAttribute('#focus [data-pick="master"]', 'aria-pressed'), 'true'); assert.deepEqual(await page.$$eval('#focus .chg.warn', (x) => x.map((e) => e.textContent)), ['MOVED ON BASE', 'MOVED ON BASE']); assert.equal((await banner()).hidden, true);
+    await page.click('#focus [data-pick="own"]'); await page.waitForFunction(() => /THE MAP NOW SHOWS ITS BASE/.test(document.getElementById('baseBanner').textContent), null, { timeout: 12000 });
+    let b = await banner(); assert.match(b.text, /Viewing #301 from its own base/); assert.match(b.text, /a1a1a1a/); assert.match(b.text, /41 commits behind main/); assert.equal(b.buttons, 1, 'the opt-in view can be left');
+    await waitFor(() => window.battlemap.state.scene.info().buildings === 16 && window.battlemap.state.scene.info().stale === 0, null, 'the map is its own base, alone'); assert.equal((await info()).flags, 1, 'only this PR is on it');
+    await page.click('#baseBanner button'); await waitFor(() => document.getElementById('baseBanner').hidden, null, 'back on the latest map'); await waitFor(() => window.battlemap.state.scene.info().stale === 4, null, 'ghost shells are back');
+    // stacked: its own base, no choice, a banner that says so
+    await page.click('.card[data-id="#310"]'); await page.waitForFunction(() => /Viewing #310 from its own base/.test(document.getElementById('baseBanner').textContent), null, { timeout: 12000 });
+    b = await banner(); assert.match(b.text, /stacked on #309/); assert.match(b.text, /you\/filters/); assert.equal(b.buttons, 0, 'unchoosable'); assert.equal(await page.$$eval('#focus [data-pick]', (x) => x.length), 0);
+    await waitFor(() => window.battlemap.state.scene.info().buildings === 17, null, 'the stack\'s parent has its file in this map'); assert.equal((await info()).flags, 1);
+    // too far behind to read: nothing drawn, a clear message, still tracked
+    await page.click('.card[data-id="#312"]'); await page.waitForFunction(() => /This PR can not be visualized/.test(document.getElementById('baseBanner').textContent), null, { timeout: 12000 });
+    b = await banner(); assert.equal(b.blind, true); assert.equal(await page.$$eval('#focus [data-blind]', (x) => x.length), 1); assert.equal((await info()).aside, 2, 'its flag waits at the side with the other');
+    await page.keyboard.press('Escape'); await waitFor(() => document.getElementById('baseBanner').hidden, null, 'banner gone'); await page.waitForSelector('.card[data-id="#312"]');
   });
 
   await step('no page errors', async () => assert.deepEqual(errors, [], `page errors: ${errors.join(' | ')}`));

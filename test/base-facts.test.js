@@ -1,7 +1,7 @@
 // What a PR targets, and what GitHub says about merging it: from gh, through the feed, to the snapshot. Facts only; nothing is interpreted here.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalisePR, FIELDS, behindQuery, behindFromGraphql, addBehind, sinceFromCompare, addSince } from '../server/providers/github.js';
+import { normalisePR, FIELDS, SyncError, behindQuery, behindFromGraphql, addBehind, sinceFromCompare, addSince } from '../server/providers/github.js';
 import { normalisePRs, normaliseBase, withBaseFacts, buildSnapshot } from '../server/snapshot.js';
 import { baseNotes, sinceTag } from '../web/changes.js';
 import { demoProvider } from '../server/demo.js';
@@ -51,6 +51,19 @@ test('how far behind: one request for twenty PRs; names go in as variables, neve
   const bad = await addBehind([{ number: 1, base: { ref: 'main' }, headSha: sha, status: 'draft' }], { repo: 'o/r', exec: async () => { throw new Error('boom'); } });
   assert.match(bad[0], /could not read how far 1 PR are behind|could not read how far 1 PRs? are behind/, 'trouble is a warning, never an error');
   assert.deepEqual(await addBehind([], { repo: 'o/r', exec }), []);
+});
+
+test('a PR that is behind and whose changes we did not read is marked, so the map never guesses for it', async () => {
+  const sha = 'e'.repeat(40), mk = (n, behind, extra = {}) => ({ number: n, base: { ref: 'main', behind }, headSha: sha, status: 'review_requested', files: [{ path: 'a.ts' }], ...extra });
+  const ok = async () => JSON.stringify({ mergeBase: sha, files: [{ filename: 'x', status: 'modified' }] });
+  const past = [mk(1, 3), mk(2, 3), mk(3, 3)]; await addSince(past, { repo: 'o/r', exec: ok, limit: 2 });
+  assert.deepEqual(past.map((p) => p.base.sinceUnknown), [undefined, undefined, true], 'past the cap: marked');
+  const failed = [mk(1, 3), mk(2, 3)]; await addSince(failed, { repo: 'o/r', exec: async () => { throw new Error('boom'); } }); assert.deepEqual(failed.map((p) => p.base.sinceUnknown), [true, true], 'a failed call: marked');
+  const nosha = [mk(1, 3, { headSha: null })]; await addSince(nosha, { repo: 'o/r', exec: ok }); assert.equal(nosha[0].base.sinceUnknown, true, 'nothing to ask about: marked');
+  const early = [mk(1, 3)]; await addSince(early, { repo: 'o/r', exec: async (c, a) => { if (a[0] === 'repo') throw new SyncError('nope'); return ok(); } }); assert.equal(early[0].base.sinceUnknown, undefined, 'it was read');
+  const fine = [mk(1, 0), mk(2, undefined), mk(3, 3, { files: [] }), mk(4, 3, { status: 'merged' })]; await addSince(fine, { repo: 'o/r', exec: ok }); assert.deepEqual(fine.map((p) => p.base.sinceUnknown), [undefined, undefined, undefined, undefined], 'up to date, unknown behind, no files, or finished: nothing to mark');
+  const { prs } = normalisePRs([{ id: '#1', status: 'draft', files: [], base: { ref: 'main', behind: 4, sinceUnknown: true } }, { id: '#2', status: 'draft', files: [], base: { ref: 'main', sinceUnknown: 'yes' } }]);
+  assert.deepEqual([prs[0].base.sinceUnknown, prs[1].base.sinceUnknown], [true, undefined], 'only a real true survives the feed');
 });
 
 test('behind survives the feed and is dropped when it is not a count', () => {

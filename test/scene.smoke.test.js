@@ -56,7 +56,7 @@ test('scene wiring with a stand-in three', async () => {
   const tdir = path.join(dir, 'node_modules/three'); fs.mkdirSync(path.join(tdir, 'examples/jsm/controls'), { recursive: true });
   fs.writeFileSync(path.join(tdir, 'package.json'), JSON.stringify({ name: 'three', type: 'module', exports: { '.': './index.js', './addons/*': './examples/jsm/*' } }));
   fs.writeFileSync(path.join(tdir, 'index.js'), FAKE_THREE); fs.writeFileSync(path.join(tdir, 'examples/jsm/controls/OrbitControls.js'), FAKE_ORBIT);
-  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js', 'building.js', 'sites.js', 'changes.js', 'placement.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
+  fs.mkdirSync(path.join(dir, 'web')); for (const f of ['scene.js', 'layout.js', 'spires.js', 'filters.js', 'building.js', 'sites.js', 'changes.js', 'placement.js', 'baseview.js']) fs.copyFileSync(path.join(import.meta.dirname, '../web', f), path.join(dir, 'web', f));
   fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
 
   const frames = []; globalThis.requestAnimationFrame = (f) => { frames.push(f); return frames.length; };
@@ -202,5 +202,26 @@ test('scene wiring with a stand-in three', async () => {
   assert.equal(sc.info().columns, 2, 'the deleted file and the old home of the move are columns on real buildings'); assert.equal(sc.info().flags, 3, 'every PR is on the map somewhere, including the one that only adds a file');
   sc.setPRs(ch.slice(1), { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); await run(3); assert.equal(sc.layout().leaves.length, baseLeaves + 1, 'untrack the PR that adds a file and its plot goes: the only thing that changes the map');
   sc.setPRs([], { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {} }); assert.equal(sc.info().ghosts, 0); assert.equal(sc.info().flags, 0);
+
+  // PRs on other bases (web/baseview.js): on the latest map the edit stands on the file's new home and the old place is a ghost; some PRs are not drawn at all
+  const O = { mode: 'sqrt', focusId: null, visible: null, fog: true, statusColors: {}, aside: null, fromBase: false };
+  const { prs: sb } = normalisePRs([
+    { id: '#9101', title: 'edits a moved file', author: 'x', status: 'review_requested', files: [{ path: 'packages/core/old/tax.ts', add: 30, del: 4, since: { change: 'moved', to: 'packages/core/domain/tax.ts' } }, { path: 'packages/core/domain/pricing.ts', add: 5, del: 1, since: { change: 'modified' } }, { path: 'packages/core/gone/legacy.ts', add: 9, del: 2, since: { change: 'removed' } }] },
+    { id: '#9102', title: 'stacked', author: 'y', status: 'draft', files: [{ path: 'wherever/it/is.ts', add: 5, del: 0 }] }]);
+  sc.setPRs(sb, O); await run(3);
+  const at = () => JSON.stringify(sc.layout().leaves.map((l) => [l.path, l.x, l.y, l.w, l.h]));
+  assert.equal(sc.info().stale, 2, 'the old place of the moved file and the place of the deleted one are ghosts'); assert.equal(sc.info().ghosts, 3, 'and the unknown file of #9102 is a plain new file here'); assert.equal(sc.layout().leaves.length, baseLeaves + 3, 'the layout has room for all three');
+  assert.ok(sc.layout().byPath.get('packages/core/old/tax.ts').ghost); assert.equal(sc.layout().byPath.get('packages/core/old/tax.ts').ghostKind, 'stale');
+  assert.equal(sc.info().columns, 2, 'columns on the real tax.ts and pricing.ts');
+  const still2 = at(); for (const focusId of ['#9101', '#9102', null]) { sc.setPRs(sb, { ...O, focusId }); await run(3); assert.equal(at(), still2, `focusing ${focusId} moves nothing`); }
+  sc.setPRs(sb, { ...O, focusId: '#9101' }); await run(3); assert.equal(sc.info().conflicts, 1, 'the file main changed too gets a quiet cue, only while the PR is focused');
+  sc.setPRs(sb, { ...O, focusId: null }); await run(3); assert.equal(sc.info().conflicts, 0);
+  sc.setPRs(sb, { ...O, aside: new Set(['#9102']) }); await run(3); assert.equal(sc.info().aside, 1); assert.equal(sc.info().flags, 2, 'an aside PR keeps its flag'); assert.equal(sc.info().ghosts, 2, 'and has nothing on the map'); assert.equal(sc.layout().leaves.length, baseLeaves + 2);
+  sc.setPRs(sb, { ...O, aside: new Set(['#9101', '#9102']) }); await run(3); assert.equal(sc.info().columns, 0); assert.equal(sc.info().ghosts, 0); assert.equal(sc.info().stale, 0); assert.equal(sc.layout().leaves.length, baseLeaves, 'nothing of theirs shapes the map'); assert.equal(sc.info().flags, 2);
+  sc.flyToPR('#9101'); sc.flyToPR('#9102'); await run(3);
+  // the PR on its own base: the map IS that tree, the PR's files are right as they are, nothing is remapped
+  const own = [{ path: 'packages/core/old/tax.ts', loc: 300, complexity: 20 }, { path: 'packages/core/gone/legacy.ts', loc: 90, complexity: 5 }];
+  sc.setFiles(own); sc.setPRs([sb[0]], { ...O, focusId: '#9101', visible: new Set(['#9101']), fromBase: true }); await run(3);
+  assert.equal(sc.layout().leaves.length, 3, 'the two files of that tree, and room for pricing.ts, which this tree does not have'); assert.equal(sc.info().stale, 0, 'no old-place ghosts: its paths are the real ones here'); assert.equal(sc.info().ghosts, 1, 'a file the base does not have is simply new, as always'); assert.equal(sc.info().columns, 2, 'a column on each of its two files in this tree'); assert.equal(sc.info().flags, 1);
   sc.dispose();
 });
