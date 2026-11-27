@@ -189,7 +189,7 @@ export async function fetchGithub({ repo = null, host = null, limit = 500, ended
   }
   const seen = new Set(open.map((p) => p.number));
   const prs = [...open, ...ended.filter((p) => !seen.has(p.number))].map((p) => normalisePR(p, { viewer, waitingSince: waiting.get(p.number) ?? null }));
-  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec })); }
+  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec }), ...await addBehind(prs, { repo, host, gh, exec })); }
   return { prs, viewer, warnings, counts: { open: open.length, ended: prs.length - open.length } };
 }
 
@@ -238,6 +238,36 @@ export async function addFileChanges(prs, { repo, host = null, gh = 'gh', exec =
     } catch { failed += chunk.length; }
   }
   if (failed) warnings.push(`could not read file changes for ${failed} PR${failed > 1 ? 's' : ''}; their new, removed and moved files show as plain changes`);
+  return warnings;
+}
+
+// ---- how far behind its target each PR is ----
+// GraphQL can compare a branch with a commit, so twenty PRs are one request. Names go in as variables (a branch name is outside text),
+// the commit is a hex sha from gh. A PR whose target branch is gone answers null and just has no count.
+const SHA = /^[0-9a-f]{7,64}$/i;
+export const behindQuery = (n) => `query($owner: String!, $name: String!${Array.from({ length: n }, (_, i) => `, $b${i}: String!, $h${i}: String!`).join('')}) { repository(owner: $owner, name: $name) {
+${Array.from({ length: n }, (_, i) => `  c${i}: ref(qualifiedName: $b${i}) { compare(headRef: $h${i}) { behindBy } }`).join('\n')}
+} }`;
+/** The answer -> an array of how far behind each asked-for PR is (a whole number) or null. Pure. */
+export function behindFromGraphql(data, n) {
+  return Array.from({ length: n }, (_, i) => { const v = data?.[`c${i}`]?.compare?.behindBy; return Number.isInteger(v) && v >= 0 ? v : null; });
+}
+/** Add `base.behind` to the open PRs. Trouble only costs the count, never the feed. */
+export async function addBehind(prs, { repo, host = null, gh = 'gh', exec = defaultExec, limit = DETAIL_LIMIT } = {}) {
+  const warnings = [], env = host ? { GH_HOST: host } : {}, open = prs.filter((p) => p.base?.ref && SHA.test(p.headSha || '') && !['merged', 'closed'].includes(p.status));
+  const looked = open.slice(0, limit); if (open.length > looked.length) warnings.push(`how far behind they are was read for ${looked.length} of ${open.length} PRs`);
+  if (!looked.length) return warnings;
+  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { return [...warnings, `could not read how far PRs are behind: ${e.message.split('\n')[0]}`]; }
+  let failed = 0;
+  for (let i = 0; i < looked.length; i += CHUNK) {
+    const chunk = looked.slice(i, i + CHUNK), args = ['api', 'graphql', '-f', `query=${behindQuery(chunk.length)}`, '-f', `owner=${owner}`, '-f', `name=${name}`];
+    chunk.forEach((p, j) => args.push('-f', `b${j}=refs/heads/${p.base.ref}`, '-f', `h${j}=${p.headSha}`));
+    try {
+      const counts = behindFromGraphql(JSON.parse(await exec(gh, args, { env }))?.data?.repository, chunk.length);
+      chunk.forEach((p, j) => { if (counts[j] != null) p.base.behind = counts[j]; });
+    } catch { failed += chunk.length; }
+  }
+  if (failed) warnings.push(`could not read how far ${failed} PR${failed > 1 ? 's' : ''} are behind their target`);
   return warnings;
 }
 

@@ -1,7 +1,7 @@
 // What a PR targets, and what GitHub says about merging it: from gh, through the feed, to the snapshot. Facts only; nothing is interpreted here.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalisePR, FIELDS } from '../server/providers/github.js';
+import { normalisePR, FIELDS, behindQuery, behindFromGraphql, addBehind } from '../server/providers/github.js';
 import { normalisePRs, normaliseBase, withBaseFacts, buildSnapshot } from '../server/snapshot.js';
 import { demoProvider } from '../server/demo.js';
 import { DEFAULTS } from '../server/config.js';
@@ -32,6 +32,27 @@ test('onDefault and stackedOn are worked out from the whole set of PRs', () => {
 test('the snapshot of the storefront carries every fact', async () => {
   const d = demoProvider(), ref = { owner: 'acme', name: 'storefront' }, { prs } = await d.prs(ref), { files } = await d.tree(ref);
   const snap = buildSnapshot({ files, prs: normalisePRs(prs).prs, cfg: DEFAULTS, defaultBranch: 'main' }), by = (n) => snap.prs.find((p) => p.id === `#${n}`).base;
-  assert.deepEqual(by(300), { ref: 'main', mergeable: 'MERGEABLE', mergeState: 'CLEAN', onDefault: true, stackedOn: null });
+  assert.deepEqual(by(300), { ref: 'main', mergeable: 'MERGEABLE', mergeState: 'CLEAN', behind: 0, onDefault: true, stackedOn: null });
   assert.equal(by(301).mergeable, 'CONFLICTING'); assert.deepEqual([by(308).onDefault, by(308).stackedOn], [false, null]); assert.deepEqual([by(310).onDefault, by(310).stackedOn], [false, '#309']);
+});
+
+test('how far behind: one request for twenty PRs; names go in as variables, never into the query text', async () => {
+  const q = behindQuery(2); assert.match(q, /\$b0: String!, \$h0: String!, \$b1: String!, \$h1: String!/); assert.match(q, /c1: ref\(qualifiedName: \$b1\) \{ compare\(headRef: \$h1\)/);
+  assert.deepEqual(behindFromGraphql({ c0: { compare: { behindBy: 12 } }, c1: null, c2: { compare: { behindBy: -1 } }, c3: { compare: { behindBy: 'x' } } }, 5), [12, null, null, null, null]);
+  assert.deepEqual(behindFromGraphql(undefined, 2), [null, null]);
+  const evil = 'x") { a } } { evil: viewer { login } } #', sha = 'a'.repeat(40), calls = [];
+  const prs = [{ number: 1, base: { ref: 'main' }, headSha: sha, status: 'review_requested' }, { number: 2, base: { ref: evil }, headSha: sha, status: 'draft' }, { number: 3, base: { ref: 'main' }, headSha: 'not-hex', status: 'draft' }, { number: 4, base: { ref: 'main' }, headSha: sha, status: 'merged' }, { number: 5, headSha: sha, status: 'draft' }];
+  const exec = async (cmd, args) => { calls.push(args); return JSON.stringify({ data: { repository: { c0: { compare: { behindBy: 3 } }, c1: { compare: { behindBy: 0 } } } } }); };
+  assert.deepEqual(await addBehind(prs, { repo: 'o/r', exec }), []);
+  assert.equal(calls.length, 1, 'one request for all of them'); const query = calls[0].find((a) => a.startsWith('query='));
+  assert.ok(!query.includes('evil') && !query.includes('main'), 'no outside text in the query'); assert.ok(calls[0].includes(`b1=refs/heads/${evil}`), 'it travels as a variable, as a plain string (-f, so a leading @ is never read as a file)');
+  assert.deepEqual([prs[0].base.behind, prs[1].base.behind, prs[2].base.behind, prs[3].base.behind], [3, 0, undefined, undefined], 'only open PRs with a target and a real commit are asked about');
+  const bad = await addBehind([{ number: 1, base: { ref: 'main' }, headSha: sha, status: 'draft' }], { repo: 'o/r', exec: async () => { throw new Error('boom'); } });
+  assert.match(bad[0], /could not read how far 1 PR are behind|could not read how far 1 PRs? are behind/, 'trouble is a warning, never an error');
+  assert.deepEqual(await addBehind([], { repo: 'o/r', exec }), []);
+});
+
+test('behind survives the feed and is dropped when it is not a count', () => {
+  const { prs } = normalisePRs([{ id: '#1', status: 'draft', files: [], base: { ref: 'main', behind: 41 } }, { id: '#2', status: 'draft', files: [], base: { ref: 'main', behind: -3 } }, { id: '#3', status: 'draft', files: [], base: { ref: 'main', behind: '7' } }]);
+  assert.deepEqual(prs.map((p) => p.base.behind), [41, undefined, undefined]);
 });

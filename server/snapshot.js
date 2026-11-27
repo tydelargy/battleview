@@ -8,7 +8,7 @@ const safeRef = (r) => (typeof r === 'string' && r.length > 0 && r.length <= 250
 /** What a PR targets, from outside: a branch name and GitHub's two verdicts, each checked against what it can be. Null when there is nothing usable. */
 export function normaliseBase(b) {
   const ref = safeRef(b?.ref); if (!ref) return null;
-  return { ref, mergeable: MERGEABLE.includes(b.mergeable) ? b.mergeable : 'UNKNOWN', mergeState: MERGE_STATES.includes(b.mergeState) ? b.mergeState : 'UNKNOWN' };
+  return { ref, mergeable: MERGEABLE.includes(b.mergeable) ? b.mergeable : 'UNKNOWN', mergeState: MERGE_STATES.includes(b.mergeState) ? b.mergeState : 'UNKNOWN', ...(Number.isInteger(b.behind) && b.behind >= 0 ? { behind: b.behind } : {}) };   // behind: commits the target has that the PR does not
 }
 export const STATUSES = ['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge', 'draft', 'merged', 'closed'];
 
