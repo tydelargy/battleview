@@ -3,6 +3,13 @@
 import { synthHunks } from './hunks.js';
 
 export const CHANGES = ['added', 'removed', 'renamed', 'modified'];
+export const MERGEABLE = ['MERGEABLE', 'CONFLICTING', 'UNKNOWN'], MERGE_STATES = ['CLEAN', 'DIRTY', 'BEHIND', 'BLOCKED', 'UNSTABLE', 'HAS_HOOKS', 'DRAFT', 'UNKNOWN'];
+const safeRef = (r) => (typeof r === 'string' && r.length > 0 && r.length <= 250 && !/[\0-\x1f\x7f]/.test(r) ? r : null);
+/** What a PR targets, from outside: a branch name and GitHub's two verdicts, each checked against what it can be. Null when there is nothing usable. */
+export function normaliseBase(b) {
+  const ref = safeRef(b?.ref); if (!ref) return null;
+  return { ref, mergeable: MERGEABLE.includes(b.mergeable) ? b.mergeable : 'UNKNOWN', mergeState: MERGE_STATES.includes(b.mergeState) ? b.mergeState : 'UNKNOWN' };
+}
 export const STATUSES = ['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge', 'draft', 'merged', 'closed'];
 
 export function needsReason(p) {
@@ -33,7 +40,7 @@ export function normalisePRs(input, identity = { prAuthors: ['you'] }) {
     prs.push({
       id: String(raw.id), number: raw.number ?? null, title: String(raw.title || raw.id), branch: raw.branch || '', author: raw.author || 'unknown',
       url: raw.url || null, ticket: raw.ticket || null, status, files, updatedAt: raw.updatedAt || null, createdAt: raw.createdAt || null, headSha: raw.headSha || null, waitingSince: raw.waitingSince || null,
-      mine: raw.mine ?? identity.prAuthors.includes(raw.author),
+      mine: raw.mine ?? identity.prAuthors.includes(raw.author), ...(normaliseBase(raw.base) ? { base: normaliseBase(raw.base) } : {}),
       adds: files.reduce((a, f) => a + f.add, 0), dels: files.reduce((a, f) => a + f.del, 0),
     });
   }
@@ -50,7 +57,20 @@ export function extractKey(pr, pattern) {
 const PR_ACTIVE = new Set(['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge']);
 const PR_REVIEWABLE = new Set(['review_requested', 're_review', 'ready_to_merge']);
 
-export function buildSnapshot({ files, prs, ended = [], jira, cfg }) {
+/**
+ * Where each PR stands against what it targets: `onDefault` (null when the default branch is not known), and `stackedOn`: the open PR whose
+ * branch this one targets. A PR is stacked on another when its target IS that PR's branch. Pure.
+ */
+export function withBaseFacts(prs, defaultBranch = null) {
+  const byBranch = new Map(); for (const p of prs) if (p.branch && !byBranch.has(p.branch)) byBranch.set(p.branch, p.id);
+  return prs.map((p) => {
+    if (!p.base) return p;
+    const parent = byBranch.get(p.base.ref);
+    return { ...p, base: { ...p.base, onDefault: defaultBranch ? p.base.ref === defaultBranch : null, stackedOn: parent && parent !== p.id ? parent : null } };
+  });
+}
+
+export function buildSnapshot({ files, prs, ended = [], jira, cfg, defaultBranch = null }) {
   const pattern = cfg.jira.keyPattern;
   const issues = jira?.issues || new Map();
   const jiraOn = !!jira?.ok;
@@ -59,7 +79,7 @@ export function buildSnapshot({ files, prs, ended = [], jira, cfg }) {
     const issue = key ? issues.get(key) || null : null;
     return { ...p, ticketKey: key, ticket: issue ? { ...issue } : null, needs: needsReason(p), epic: issue?.epic?.name || null };
   };
-  const outPRs = prs.map(join);
+  const outPRs = withBaseFacts(prs, defaultBranch).map(join);
   const endedOut = ended.map((p) => ({ ...join(p), ended: true }));   // shown as cards, kept out of the drift checks
 
   const insights = [];

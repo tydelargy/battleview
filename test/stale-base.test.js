@@ -12,9 +12,8 @@ const { files } = await d.tree(ref), { prs } = await d.prs(ref), B = buildLayout
 const rows = classifyChanges(prs, B.byPath), of = (n) => rows.filter((r) => r.prId === `#${n}`), kinds = (n) => of(n).map((r) => `${r.kind}:${r.path}`);
 
 test('the cases exist and say what GitHub would know about each base', () => {
-  assert.equal(prs.length, 11); assert.ok(prs.every((p) => p.base && Number.isInteger(p.behind) && p.mergeState));
-  assert.deepEqual(prs.filter((p) => p.base !== 'main').map((p) => p.number), [308, 310], 'a release branch and a stacked PR');
-  assert.deepEqual(prs.filter((p) => p.behind === 0).map((p) => p.number), [300, 309, 310]);
+  assert.equal(prs.length, 11); assert.ok(prs.every((p) => p.base?.ref && p.base.mergeState));
+  assert.deepEqual(prs.filter((p) => p.base.ref !== 'main').map((p) => p.number), [308, 310], 'a release branch and a stacked PR');
 });
 
 test('control: an up-to-date PR reads right', () => { assert.deepEqual(kinds(300), ['modified:src/catalog/Product.tsx']); });

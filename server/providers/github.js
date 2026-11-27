@@ -11,7 +11,7 @@ import { needsReason } from '../snapshot.js';
 export class SyncError extends Error {}
 
 export const FIELDS = ['number', 'title', 'headRefName', 'headRefOid', 'author', 'isDraft', 'reviewDecision', 'statusCheckRollup',
-  'createdAt', 'updatedAt', 'url', 'files', 'reviewRequests', 'latestReviews', 'state', 'mergedAt', 'closedAt'];
+  'createdAt', 'updatedAt', 'url', 'files', 'reviewRequests', 'latestReviews', 'state', 'mergedAt', 'closedAt', 'baseRefName', 'mergeable', 'mergeStateStatus'];
 
 const DETAIL_LIMIT = 100, CHUNK = 20;   // timelines are read twenty PRs to a request; cap how many so a huge repo cannot make a sync crawl
 const FAILING_CONCLUSIONS = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED']);
@@ -104,6 +104,7 @@ export function normalisePR(raw, { viewer = null, waitingSince = null } = {}) {
   const author = raw.author?.login || 'unknown';
   return {
     id: `#${raw.number}`, number: raw.number, title: raw.title || `#${raw.number}`, branch: raw.headRefName || '', author, url: raw.url || null,
+    ...(raw.baseRefName ? { base: { ref: String(raw.baseRefName), mergeable: raw.mergeable || 'UNKNOWN', mergeState: raw.mergeStateStatus || 'UNKNOWN' } } : {}),   // what it targets, and whether GitHub can merge it as it stands
     status: prStatus(raw), createdAt: raw.createdAt || null, updatedAt: raw.updatedAt || null, headSha: raw.headRefOid || null, waitingSince,
     ...(viewer ? { mine: author.toLowerCase() === viewer.toLowerCase() } : {}),
     files: (raw.files || []).map((f) => ({ path: f.path, add: f.additions || 0, del: f.deletions || 0 })),

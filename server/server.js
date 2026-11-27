@@ -95,7 +95,7 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
       authors: [...new Set(app.prs.map((p) => p.author))].sort(),
     };
   };
-  const snapshot = () => withNotifications({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, ...(app.city ? { city: app.city } : {}), problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
+  const snapshot = () => withNotifications({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get(), defaultBranch: app.city?.branch || null }), version: app.version, sampleMode: app.sampleMode, ...(app.city ? { city: app.city } : {}), problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
   /** Alerts you have silenced move to their own list; the inbox goes to the browser newest first. */
   function withNotifications(snap) {
     const sil = notify.silencedIds(), n = notify.get();

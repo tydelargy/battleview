@@ -62,7 +62,7 @@ const STORE = tree({
   config: { 'build.ts': 70 },
   test: { 'cart.test.ts': 220 },
 });
-const stale = (base, behind, mergeState) => ({ base, behind, mergeState });
+const stale = (ref, behind, mergeState) => ({ base: { ref, mergeable: mergeState === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE', mergeState } });   // what GitHub says (behind comes later)
 const STORE_PRS = () => [
   pr(300, 'Control: edit a product page (up to date)', 'you', 'review_requested', [f('src/catalog/Product.tsx', 44, 12)], 3, undefined, stale('main', 0, 'CLEAN')),
   pr(301, 'Promo codes: edit the cart (cart moved on main)', 'you', 'review_requested', [f('src/cart/Cart.tsx', 60, 14), f('src/cart/totals.ts', 22, 6)], 6, undefined, stale('main', 41, 'DIRTY')),

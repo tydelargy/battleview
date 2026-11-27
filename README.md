@@ -101,7 +101,7 @@ curl -X POST localhost:4747/api/prs -H 'X-Battlemap: 1' -H 'Content-Type: applic
 }]}
 ```
 
-Also optional: `createdAt` and `updatedAt` (ages and sorting), `headSha` (so pushes are noticed exactly), `mine` (true for your own PRs), and `waitingSince` (when the PR started waiting on you: for your own PR, its oldest unaddressed comment; for someone else's PR in re-review, when you were asked to review again; without it, `updatedAt` stands in). `hunks` are optional and in file order; without them focus mode estimates a plausible split that still sums to the file totals (marked "estimated"). `ticket` is optional. Whether a PR "needs you" is decided in `server/snapshot.js` `needsReason()`; change it there.
+Also optional: `createdAt` and `updatedAt` (ages and sorting), `headSha` (so pushes are noticed exactly), `mine` (true for your own PRs), and `waitingSince` (when the PR started waiting on you: for your own PR, its oldest unaddressed comment; for someone else's PR in re-review, when you were asked to review again; without it, `updatedAt` stands in). `base` is optional: `{ ref, mergeable, mergeState }`, the branch the PR targets and GitHub's two verdicts (`MERGEABLE`/`CONFLICTING`/`UNKNOWN`; `CLEAN`/`DIRTY`/`BEHIND`/`BLOCKED`/...). The map only reports these facts; it does not interpret a rebase or a merge. `hunks` are optional and in file order; without them focus mode estimates a plausible split that still sums to the file totals (marked "estimated"). `ticket` is optional. Whether a PR "needs you" is decided in `server/snapshot.js` `needsReason()`; change it there.
 
 ## Layout
 
