@@ -5,6 +5,7 @@
 //   click:<selector>   wait:<ms>   view:<2d|iso|3d>   file:<path> (fly to a file)   eval:<js>
 //   feed:<sample|sample-without-#id>   post the sample PRs as a real feed (switches the map to opt-in tracking)
 //   change:<#id>:<push|ci|green|re>    then something happens to a PR in that feed: new commits, CI goes red, CI recovers, re-review requested
+//   node e2e/shot2.mjs stale     (the demo hub instead: acme/storefront, a PR whose files main moved, focused: ghost.png)
 //   rule:<author|path>:<value>   pick:<ref>   shot:<name>   info
 import { spawn } from 'node:child_process';
 import os from 'node:os';
@@ -14,7 +15,8 @@ import { samplePRs } from '../server/sample.js';
 
 const port = 4812, base = `http://127.0.0.1:${port}`;
 const out = path.resolve(process.env.SHOTS_DIR || os.tmpdir());
-const srv = spawn('node', ['bin/battlemap.js', '--sample', '--mock-jira', '--port', String(port), '--mock-port', '4813', '--config', path.join(os.tmpdir(), `shot2-cfg-${process.pid}.json`)], { stdio: ['ignore', 'pipe', 'inherit'] });
+const DEMO = process.argv[2] === 'stale';   // the one shot that needs the demo GitHub (acme/storefront), not the sample map
+const srv = spawn('node', ['bin/battlemap.js', DEMO ? '--demo' : '--sample', '--mock-jira', '--port', String(port), '--mock-port', '4813', '--config', path.join(os.tmpdir(), `shot2-cfg-${process.pid}.json`)], { stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((r) => srv.stdout.on('data', (d) => /Battle Map at/.test(String(d)) && r()));
 const toStart = "eval:document.getElementById('cards').scrollLeft=0";   // selecting a PR scrolls the tray; start the next shot from the left
 const README = ['shot:overview', 'view:3d', 'wait:2500', 'shot:3d', 'view:iso', 'wait:2500',
@@ -34,6 +36,18 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME || '/
 try {
   const page = await browser.newPage({ viewport: { width: 1360, height: 840 } });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+  if (DEMO) {   // add the storefront to a free hex, go in, track the PRs, focus the one whose folder main renamed
+    await page.goto(`${base}/`); await page.waitForSelector('#world:not([hidden]) canvas'); await page.waitForTimeout(1500);
+    const world = () => fetch(`${base}/api/hub/world`).then((r) => r.json()), at = (h) => page.evaluate((x) => window.battlemap.world.world().hexScreen(x), h);
+    let p = await at((await world()).slots[0]); await page.mouse.move(p.sx, p.sy); await page.waitForSelector('#wplus:not([hidden])'); await page.click('#wplus');
+    await page.fill('#wadd-url', 'acme/storefront'); await page.click('#wadd-go'); await page.waitForFunction(() => window.battlemap.world.info().cities === 2, null, { timeout: 9000 });
+    p = await at((await world()).cities.find((c) => c.key === 'acme/storefront')); await page.mouse.click(p.sx, p.sy); await page.waitForSelector('body.in-city', { timeout: 12000 });
+    await page.waitForTimeout(2500);
+    await fetch(`${base}/r/acme--storefront/api/watch/pick`, { method: 'POST', headers: { 'X-Battlemap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: '#302' }) });
+    await page.waitForSelector('.card[data-id="#302"]', { timeout: 12000 }); await page.click('.card[data-id="#302"]'); await page.waitForTimeout(3500);
+    await page.screenshot({ path: path.join(out, 'ghost.png') }); console.log('wrote', path.join(out, 'ghost.png'));
+    console.log('errors:', errs.join('|') || 'none'); await browser.close(); srv.kill(); process.exit(0);
+  }
   await page.goto(`${base}/`); await page.waitForSelector('.card'); await page.waitForTimeout(3000);
   const steps = process.argv[2] === 'readme' ? README : process.argv.slice(2);
   for (const step of steps) {

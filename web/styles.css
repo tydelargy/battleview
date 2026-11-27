@@ -333,6 +333,7 @@ body.hub:not(.in-city) .hud,body.hub:not(.in-city) #fab,body.hub:not(.in-city) #
 body.hub:not(.in-city) #toast{bottom:200px}
 
 .bm-move{stroke-dasharray:10 6;stroke-width:2.6}
+.bm-stale{stroke-dasharray:1 9;stroke-width:3.6;stroke-linecap:round;fill:none}   /* a dotted trail: where the PR aimed, to where the edit landed */
 .chg{font-style:normal;font:700 8.5px var(--display);letter-spacing:.08em;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:1px}
 .chg.add{background:color-mix(in srgb,var(--add) 22%,transparent);color:var(--add)}
 .chg.del{background:color-mix(in srgb,var(--del) 22%,transparent);color:var(--del)}

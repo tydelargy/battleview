@@ -210,13 +210,18 @@ test('scene wiring with a stand-in three', async () => {
     { id: '#9102', title: 'stacked', author: 'y', status: 'draft', files: [{ path: 'wherever/it/is.ts', add: 5, del: 0 }] }]);
   sc.setPRs(sb, O); await run(3);
   const at = () => JSON.stringify(sc.layout().leaves.map((l) => [l.path, l.x, l.y, l.w, l.h]));
-  assert.equal(sc.info().stale, 2, 'the old place of the moved file and the place of the deleted one are ghosts'); assert.equal(sc.info().ghosts, 3, 'and the unknown file of #9102 is a plain new file here'); assert.equal(sc.layout().leaves.length, baseLeaves + 3, 'the layout has room for all three');
+  assert.equal(sc.info().stale, 0, 'nothing is reserved for the old places while nobody is focused'); assert.equal(sc.info().ghosts, 1, 'only the unknown file of #9102 is a plain new file here'); assert.equal(sc.layout().leaves.length, baseLeaves + 1);
+  assert.equal(sc.info().columns, 2, 'columns on the real tax.ts and pricing.ts'); assert.equal(sc.info().moves, 0, 'and no trail to nowhere');
+  sc.setPRs(sb, { ...O, focusId: '#9101' }); await run(3);
+  assert.equal(sc.info().stale, 2, 'focused: the old place of the moved file and the place of the deleted one are ghosts'); assert.equal(sc.layout().leaves.length, baseLeaves + 3, 'and the layout has room for them');
   assert.ok(sc.layout().byPath.get('packages/core/old/tax.ts').ghost); assert.equal(sc.layout().byPath.get('packages/core/old/tax.ts').ghostKind, 'stale');
-  assert.equal(sc.info().columns, 2, 'columns on the real tax.ts and pricing.ts');
-  const still2 = at(); for (const focusId of ['#9101', '#9102', null]) { sc.setPRs(sb, { ...O, focusId }); await run(3); assert.equal(at(), still2, `focusing ${focusId} moves nothing`); }
+  const focused2 = at(); sc.setPRs(sb, { ...O, focusId: '#9101', hover: null }); await run(3); assert.equal(at(), focused2, 'and holds still while it stays focused');
   sc.setPRs(sb, { ...O, focusId: '#9101' }); await run(3); assert.equal(sc.info().conflicts, 1, 'the file main changed too gets a quiet cue, only while the PR is focused');
   sc.setPRs(sb, { ...O, focusId: null }); await run(3); assert.equal(sc.info().conflicts, 0);
-  sc.setPRs(sb, { ...O, aside: new Set(['#9102']) }); await run(3); assert.equal(sc.info().aside, 1); assert.equal(sc.info().flags, 2, 'an aside PR keeps its flag'); assert.equal(sc.info().ghosts, 2, 'and has nothing on the map'); assert.equal(sc.layout().leaves.length, baseLeaves + 2);
+  assert.equal(sc.info().shells, 0, 'unfocused: no shell'); assert.equal(sc.info().moves, 0);
+  sc.setPRs(sb, { ...O, focusId: '#9101' }); await run(3); assert.equal(sc.info().shells, 2, 'focusing the PR draws both old-place shells'); assert.equal(sc.info().moves, 1, 'with a trail from the moved file\'s old place to its new home');
+  sc.setPRs(sb, { ...O, focusId: '#9102' }); await run(3); assert.equal(sc.info().shells, 0, 'another PR focused: none'); assert.equal(sc.layout().leaves.length, baseLeaves + 1);
+  sc.setPRs(sb, { ...O, aside: new Set(['#9102']) }); await run(3); assert.equal(sc.info().aside, 1); assert.equal(sc.info().flags, 2, 'an aside PR keeps its flag'); assert.equal(sc.info().ghosts, 0, 'and has nothing on the map'); assert.equal(sc.layout().leaves.length, baseLeaves);
   sc.setPRs(sb, { ...O, aside: new Set(['#9101', '#9102']) }); await run(3); assert.equal(sc.info().columns, 0); assert.equal(sc.info().ghosts, 0); assert.equal(sc.info().stale, 0); assert.equal(sc.layout().leaves.length, baseLeaves, 'nothing of theirs shapes the map'); assert.equal(sc.info().flags, 2);
   sc.flyToPR('#9101'); sc.flyToPR('#9102'); await run(3);
   // the PR on its own base: the map IS that tree, the PR's files are right as they are, nothing is remapped

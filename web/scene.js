@@ -270,12 +270,12 @@ export function createScene(host, handlers = {}) {
   /**
    * The layout to show: the map with every tracked PR's new and moved-to files already in it (flagged `ghost`; they are drawn as empty
    * scaffold frames, not buildings). It depends only on which PRs are tracked, never on what is focused, filtered or hovered, so a file
-   * never moves because you looked at a different PR. Cached by the set of ghost files.
+   * never moves because you looked at a different PR. The one exception: the old place of a file main moved or deleted gets room (a ghost shell, and a trail to where the edit landed) only while its PR is focused. Cached by the set of ghost files.
    */
   function layoutFor(prs) {
     const base = S.baseLayout; if (!base) return base;
     const live = (prs || []).filter((p) => !p.ended && p.status !== 'merged' && p.status !== 'closed');
-    const added = ghostFiles(classifyChanges(live, base.byPath), base.byPath), have = new Set(added.map((e) => e.path)), extra = [...added, ...staleFiles(live, base.byPath).filter((e) => !have.has(e.path))];
+    const added = ghostFiles(classifyChanges(live, base.byPath), base.byPath), have = new Set(added.map((e) => e.path)), extra = [...added, ...staleFiles(live.filter((p) => p.id === S.opts.focusId), base.byPath).filter((e) => !have.has(e.path))];   // old places get room only while their PR is focused
     if (!extra.length) return base;
     const key = extra.map((e) => `${e.path}:${e.loc}:${e.complexity}:${e.kind}`).join(',');
     if (S.ghostKey === key && S.ghostLayout) return S.ghostLayout;
@@ -433,7 +433,8 @@ export function createScene(host, handlers = {}) {
     for (const p of prs) for (const s of p.stale || []) {
       const lot = staleLots.get(`${p.id}|${s.path}`); if (!lot || seenStale.has(s.path) || byPath.has(s.path)) continue; seenStale.add(s.path);
       const shell = S.styled.get(s.path)?.shell, g = { prId: p.id, path: s.path, kind: 'stale', add: s.add, del: s.del, lot, anchor: anchorFor(L, s.path), z0: 0, status: p.status, dimmed: !!focus && focus !== p.id, focused: focus === p.id, tone: 'stale' };
-      g.built = shell ? staleParts(shell) : null; g.top = g.built ? g.built.top : 0; S.ghosts.push(g);
+      g.built = shell && g.focused ? staleParts(shell) : null; g.top = g.built ? g.built.top : 0; S.ghosts.push(g);   // the shell is for a close look: only the focused PR's
+      const home = s.to && L.byPath.get(s.to); if (home) S.moves.push({ stale: true, prId: p.id, status: p.status, lot, home, dimmed: g.dimmed });   // from far away: a line from the old place to where the edit landed
     }
     for (const g of S.ghosts) if (g.kind === 'renamed' && g.fromExists) S.moves.push({ prId: g.prId, status: g.status, from: L.byPath.get(g.from), to: g.lot, z0: 0, top: g.top, dimmed: g.dimmed });
   }
@@ -646,11 +647,13 @@ export function createScene(host, handlers = {}) {
     }
     // a file that moves: an amber dashed arc from its old building to its new lot
     S.moves.forEach((mv, i) => {
-      const a = project(mv.from.mx, mv.from.my, (S.styled.get(mv.from.path)?.roof.z ?? mv.from.height) + 1), b = project(mv.to.x, mv.to.y, mv.top + 1);
+      const a = mv.stale ? project(mv.lot.x, mv.lot.y, 0.5) : project(mv.from.mx, mv.from.my, (S.styled.get(mv.from.path)?.roof.z ?? mv.from.height) + 1);
+      const b = mv.stale ? project(mv.home.mx, mv.home.my, (S.styled.get(mv.home.path)?.roof.z ?? mv.home.height) + 1) : project(mv.to.x, mv.to.y, mv.top + 1);
       let el = moveArcs[i]; if (!el) { el = svgEl('path', 'bm-line bm-move'); gLines.appendChild(el); moveArcs[i] = el; }
+      el.setAttribute('class', mv.stale ? 'bm-line bm-stale' : 'bm-line bm-move');
       if (!(a.vis && b.vis)) { el.style.display = 'none'; return; }
       el.setAttribute('d', `M${a.sx.toFixed(1)},${a.sy.toFixed(1)} Q${((a.sx + b.sx) / 2).toFixed(1)},${(Math.min(a.sy, b.sy) - 60 - Math.hypot(a.sx - b.sx, a.sy - b.sy) * 0.15).toFixed(1)} ${b.sx.toFixed(1)},${b.sy.toFixed(1)}`);
-      el.setAttribute('stroke', '#ffd23f'); el.style.display = ''; el.style.opacity = mv.dimmed ? '0.3' : '1';
+      el.setAttribute('stroke', mv.stale ? statusColor(mv.status) : '#ffd23f'); el.style.display = ''; el.style.opacity = mv.dimmed ? '0.3' : '1';
     });
     for (let i = S.moves.length; i < moveArcs.length; i++) moveArcs[i].style.display = 'none';
     for (let i = li; i < lines.length; i++) lines[i].style.display = 'none';
@@ -753,7 +756,7 @@ export function createScene(host, handlers = {}) {
     setUI(u) { const was = S.ui.watched; S.ui = { ...S.ui, ...u }; if (S.ui.watched !== was) drawWatch(); },
     setWatched(paths) { S.watched = new Set(paths || []); drawWatch(); },
     setHighlight(paths) { S.highlight = new Set(paths || []); refreshBuildings(); },
-    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov, sites: S.sites.length, ghosts: S.ghosts.length, placed: S.ghosts.filter((g) => g.lot).length, stale: S.ghosts.filter((g) => g.kind === 'stale').length, aside: S.prs.filter((p) => p.aside).length, conflicts: S.conflicts?.size || 0, moves: S.moves.length }),
+    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov, sites: S.sites.length, ghosts: S.ghosts.length, placed: S.ghosts.filter((g) => g.lot).length, stale: S.ghosts.filter((g) => g.kind === 'stale').length, aside: S.prs.filter((p) => p.aside).length, conflicts: S.conflicts?.size || 0, moves: S.moves.length, shells: S.ghosts.filter((g) => g.kind === 'stale' && g.built).length }),
     layout: () => S.layout,
     /** Hash identity of one file: its index code, silhouette and window style. */
     buildingInfo(path) { const b = S.styled.get(path); return b ? { code: b.t.code, shape: S.style.mode === 'full' ? SHAPES[b.t.shape] : 'block', parts: b.parts.length } : null; },

@@ -244,7 +244,7 @@ async function loadTransitions(prId) {
 /** NEW / DELETED / MOVED beside a file in the PR panel, so a file the map has no building for is still plainly there. */
 function fileTag(f) {
   const onMap = state.scene?.layout()?.byPath;
-  const [text, cls, tip] = f.change === 'removed' ? ['DELETED', 'del', 'This PR deletes the file'] : f.change === 'renamed' && f.from ? ['MOVED', 'mv', `Moved from ${f.from}`] : (f.change === 'added' || (onMap && !onMap.has(f.path))) ? ['NEW', 'add', 'A new file: not on the map until it is merged'] : [null];
+  const [text, cls, tip] = f.change === 'removed' ? ['DELETED', 'del', 'This PR deletes the file'] : f.change === 'renamed' && f.from ? ['MOVED', 'mv', `Moved from ${f.from}`] : (f.change === 'added' || (onMap && !f.since && !onMap.has(f.path))) ? ['NEW', 'add', 'A new file: not on the map until it is merged'] : [null];
   const sn = sinceTag(f.since), onBase = sn ? h('i', { class: 'chg warn', title: sn[1] }, sn[0]) : null;
   return text || onBase ? [text ? h('i', { class: `chg ${cls}`, title: tip }, text) : null, onBase] : null;
 }
