@@ -62,17 +62,19 @@ const STORE = tree({
   config: { 'build.ts': 70 },
   test: { 'cart.test.ts': 220 },
 });
+const mv = (to) => ({ change: 'moved', to }), gone = { change: 'removed' }, edited = { change: 'modified' }, both = { change: 'added' };
+const sf = (file, since) => ({ ...file, since });   // a PR file, plus what the target did to it since the PR branched
 const stale = (ref, behind, mergeState) => ({ base: { ref, mergeable: mergeState === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE', mergeState, behind } });   // what GitHub says
 const STORE_PRS = () => [
   pr(300, 'Control: edit a product page (up to date)', 'you', 'review_requested', [f('src/catalog/Product.tsx', 44, 12)], 3, undefined, stale('main', 0, 'CLEAN')),
-  pr(301, 'Promo codes: edit the cart (cart moved on main)', 'you', 'review_requested', [f('src/cart/Cart.tsx', 60, 14), f('src/cart/totals.ts', 22, 6)], 6, undefined, stale('main', 41, 'DIRTY')),
-  pr(302, 'Cart rewrite, 5 files in the folder main renamed', 'devon', 'review_requested', [f('src/cart/Cart.tsx', 120, 80), f('src/cart/CartItem.tsx', 40, 10), f('src/cart/totals.ts', 30, 12), f('src/cart/promo.ts', 55, 3), f('src/cart/Coupons.tsx', 90, 0, 'added')], 30, undefined, stale('main', 41, 'DIRTY')),
-  pr(303, 'Tidy checkout (touches a file main deleted)', 'maya', 'changes_requested', [f('src/legacy/oldCheckout.ts', 18, 7), f('src/checkout/Checkout.tsx', 36, 20)], 18, undefined, stale('main', 25, 'DIRTY')),
-  pr(304, 'Remove the old formatter (main moved it)', 'ines', 'review_requested', [f('src/utils/format.ts', 0, 90, 'removed'), f('src/lib/http.ts', 8, 2)], 40, undefined, stale('main', 12, 'DIRTY')),
-  pr(305, 'Move promo.ts into its own folder (main moved it first)', 'kofi', 'review_requested', [f('src/checkout/promo/promo.ts', 6, 2, 'renamed', 'src/cart/promo.ts')], 22, undefined, stale('main', 41, 'DIRTY')),
-  pr(306, 'Move format.ts to lib/ (main already did)', 'agent', 'review_requested', [f('src/lib/format.ts', 4, 1, 'renamed', 'src/utils/format.ts')], 9, undefined, stale('main', 12, 'DIRTY')),
-  pr(307, 'Add money.ts (main added it too)', 'devon', 'ci_failing', [f('src/lib/money.ts', 120, 0, 'added'), f('src/checkout/Payment.tsx', 14, 3)], 14, undefined, stale('main', 8, 'DIRTY')),
-  pr(308, 'Backport search fix to the 2.x release', 'maya', 'review_requested', [f('src/catalog/search.ts', 30, 8), f('src/catalog/v2/search.ts', 110, 0, 'added'), f('src/catalog/v2/index.ts', 12, 0, 'added')], 50, undefined, stale('release/2.x', 260, 'CLEAN')),
+  pr(301, 'Promo codes: edit the cart (cart moved on main)', 'you', 'review_requested', [sf(f('src/cart/Cart.tsx', 60, 14), mv('src/checkout/cart/Cart.tsx')), sf(f('src/cart/totals.ts', 22, 6), mv('src/checkout/cart/totals.ts'))], 6, undefined, stale('main', 41, 'DIRTY')),
+  pr(302, 'Cart rewrite, 5 files in the folder main renamed', 'devon', 'review_requested', [sf(f('src/cart/Cart.tsx', 120, 80), mv('src/checkout/cart/Cart.tsx')), sf(f('src/cart/CartItem.tsx', 40, 10), mv('src/checkout/cart/CartItem.tsx')), sf(f('src/cart/totals.ts', 30, 12), mv('src/checkout/cart/totals.ts')), sf(f('src/cart/promo.ts', 55, 3), mv('src/checkout/cart/promo.ts')), f('src/cart/Coupons.tsx', 90, 0, 'added')], 30, undefined, stale('main', 41, 'DIRTY')),
+  pr(303, 'Tidy checkout (touches a file main deleted)', 'maya', 'changes_requested', [sf(f('src/legacy/oldCheckout.ts', 18, 7), gone), sf(f('src/checkout/Checkout.tsx', 36, 20), edited)], 18, undefined, stale('main', 25, 'DIRTY')),
+  pr(304, 'Remove the old formatter (main moved it)', 'ines', 'review_requested', [sf(f('src/utils/format.ts', 0, 90, 'removed'), mv('src/lib/format.ts')), f('src/lib/http.ts', 8, 2)], 40, undefined, stale('main', 12, 'DIRTY')),
+  pr(305, 'Move promo.ts into its own folder (main moved it first)', 'kofi', 'review_requested', [sf(f('src/checkout/promo/promo.ts', 6, 2, 'renamed', 'src/cart/promo.ts'), mv('src/checkout/cart/promo.ts'))], 22, undefined, stale('main', 41, 'DIRTY')),
+  pr(306, 'Move format.ts to lib/ (main already did)', 'agent', 'review_requested', [sf(f('src/lib/format.ts', 4, 1, 'renamed', 'src/utils/format.ts'), mv('src/lib/format.ts'))], 9, undefined, stale('main', 12, 'DIRTY')),
+  pr(307, 'Add money.ts (main added it too)', 'devon', 'ci_failing', [sf(f('src/lib/money.ts', 120, 0, 'added'), both), f('src/checkout/Payment.tsx', 14, 3)], 14, undefined, stale('main', 8, 'DIRTY')),
+  pr(308, 'Backport search fix to the 2.x release', 'maya', 'review_requested', [sf(f('src/catalog/search.ts', 30, 8), edited), f('src/catalog/v2/search.ts', 110, 0, 'added'), f('src/catalog/v2/index.ts', 12, 0, 'added')], 50, undefined, stale('release/2.x', 260, 'CLEAN')),
   pr(309, 'New search filters', 'you', 'review_requested', [f('src/catalog/filters.ts', 140, 0, 'added'), f('src/catalog/search.ts', 26, 5)], 8, 'you/filters', stale('main', 0, 'CLEAN')),
   pr(310, 'Filter chips (stacked on #309)', 'you', 'draft', [f('src/catalog/filters.ts', 34, 6), f('src/catalog/Catalog.tsx', 28, 4)], 4, undefined, stale('you/filters', 0, 'CLEAN')),
 ];

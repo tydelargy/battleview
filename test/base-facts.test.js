@@ -1,7 +1,7 @@
 // What a PR targets, and what GitHub says about merging it: from gh, through the feed, to the snapshot. Facts only; nothing is interpreted here.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalisePR, FIELDS, behindQuery, behindFromGraphql, addBehind } from '../server/providers/github.js';
+import { normalisePR, FIELDS, behindQuery, behindFromGraphql, addBehind, sinceFromCompare, addSince } from '../server/providers/github.js';
 import { normalisePRs, normaliseBase, withBaseFacts, buildSnapshot } from '../server/snapshot.js';
 import { demoProvider } from '../server/demo.js';
 import { DEFAULTS } from '../server/config.js';
@@ -55,4 +55,39 @@ test('how far behind: one request for twenty PRs; names go in as variables, neve
 test('behind survives the feed and is dropped when it is not a count', () => {
   const { prs } = normalisePRs([{ id: '#1', status: 'draft', files: [], base: { ref: 'main', behind: 41 } }, { id: '#2', status: 'draft', files: [], base: { ref: 'main', behind: -3 } }, { id: '#3', status: 'draft', files: [], base: { ref: 'main', behind: '7' } }]);
   assert.deepEqual(prs.map((p) => p.base.behind), [41, undefined, undefined]);
+});
+
+test('what the target did to a file since the PR branched: removed, moved (and where), changed, added', () => {
+  const compare = [{ filename: 'lib/new.ts', status: 'renamed', previous_filename: 'old/a.ts' }, { filename: 'gone.ts', status: 'removed' }, { filename: 'edited.ts', status: 'modified' }, { filename: 'both.ts', status: 'added' }, { filename: 'other.ts', status: 'modified' }, null, { status: 'x' }];
+  const m = sinceFromCompare(compare, ['old/a.ts', 'gone.ts', 'edited.ts', 'both.ts', 'untouched.ts']);
+  assert.deepEqual([...m], [['old/a.ts', { change: 'moved', to: 'lib/new.ts' }], ['gone.ts', { change: 'removed' }], ['edited.ts', { change: 'modified' }], ['both.ts', { change: 'added' }]], 'untouched files and files nobody asked about are left out');
+  assert.equal(sinceFromCompare(undefined, ['a']).size, 0); assert.equal(sinceFromCompare([], ['a']).size, 0);
+});
+
+test('addSince asks once per PR that is behind (and only those), keys a move by the file the PR means, and flags a cut list', async () => {
+  const sha = 'b'.repeat(40), calls = [];
+  const prs = [
+    { number: 1, base: { ref: 'release/2.x', behind: 5 }, headSha: sha, status: 'draft', files: [{ path: 'a.ts' }, { path: 'new/b.ts', change: 'renamed', from: 'old/b.ts' }] },
+    { number: 2, base: { ref: 'main', behind: 0 }, headSha: sha, status: 'draft', files: [{ path: 'a.ts' }] },
+    { number: 3, base: { ref: 'main' }, headSha: sha, status: 'draft', files: [{ path: 'a.ts' }] },
+    { number: 4, base: { ref: 'main', behind: 9 }, headSha: sha, status: 'merged', files: [{ path: 'a.ts' }] },
+    { number: 5, base: { ref: 'main', behind: 9 }, headSha: sha, status: 'draft', files: [] },
+  ];
+  const exec = async (cmd, args) => { calls.push(args[1]); const big = Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` })); return JSON.stringify({ files: [{ filename: 'a.ts', status: 'removed' }, { filename: 'moved/b.ts', status: 'renamed', previous_filename: 'old/b.ts' }, ...big] }); };
+  assert.deepEqual(await addSince(prs, { repo: 'o/r', exec }), []);
+  assert.deepEqual(calls, [`repos/o/r/compare/${sha}...release%2F2.x`], 'one request, with the branch name encoded');
+  assert.deepEqual(prs[0].files, [{ path: 'a.ts', since: { change: 'removed' } }, { path: 'new/b.ts', change: 'renamed', from: 'old/b.ts', since: { change: 'moved', to: 'moved/b.ts' } }]);
+  assert.equal(prs[0].base.sinceCut, true, 'compare lists 300 files at most: a full list may be cut short'); assert.equal(prs[1].files[0].since, undefined);
+  const bad = await addSince([{ number: 1, base: { ref: 'main', behind: 2 }, headSha: sha, status: 'draft', files: [{ path: 'a' }] }], { repo: 'o/r', exec: async () => 'not json' }); assert.match(bad[0], /could not read what the target changed for 1 PR/);
+});
+
+test('since survives the feed only when it is a known change; a move needs a place', () => {
+  const f = (since) => ({ path: 'a.ts', add: 1, del: 0, since });
+  const { prs } = normalisePRs([{ id: '#1', status: 'draft', files: [f({ change: 'moved', to: 'b.ts' }), f({ change: 'moved' }), f({ change: 'removed', to: 'ignored' }), f({ change: 'bogus' }), f('x'), f(undefined)], base: { ref: 'main', sinceCut: true } }]);
+  assert.deepEqual(prs[0].files.map((x) => x.since), [{ change: 'moved', to: 'b.ts' }, undefined, { change: 'removed' }, undefined, undefined, undefined]); assert.equal(prs[0].base.sinceCut, true);
+});
+
+test('the storefront says what main did to each file its stale PRs touch', async () => {
+  const { prs } = await demoProvider().prs({ owner: 'acme', name: 'storefront' }), since = (n) => prs.find((p) => p.number === n).files.map((f) => f.since?.change || '-');
+  assert.deepEqual(since(300), ['-']); assert.deepEqual(since(301), ['moved', 'moved']); assert.deepEqual(since(302), ['moved', 'moved', 'moved', 'moved', '-']); assert.deepEqual(since(303), ['removed', 'modified']); assert.deepEqual(since(307), ['added', '-']);
 });

@@ -189,7 +189,7 @@ export async function fetchGithub({ repo = null, host = null, limit = 500, ended
   }
   const seen = new Set(open.map((p) => p.number));
   const prs = [...open, ...ended.filter((p) => !seen.has(p.number))].map((p) => normalisePR(p, { viewer, waitingSince: waiting.get(p.number) ?? null }));
-  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec }), ...await addBehind(prs, { repo, host, gh, exec })); }
+  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec }), ...await addBehind(prs, { repo, host, gh, exec }), ...await addSince(prs, { repo, host, gh, exec })); }
   return { prs, viewer, warnings, counts: { open: open.length, ended: prs.length - open.length } };
 }
 
@@ -268,6 +268,40 @@ export async function addBehind(prs, { repo, host = null, gh = 'gh', exec = defa
     } catch { failed += chunk.length; }
   }
   if (failed) warnings.push(`could not read how far ${failed} PR${failed > 1 ? 's' : ''} are behind their target`);
+  return warnings;
+}
+
+// ---- what the target did to each file since the PR branched ----
+// REST compare, from the PR's head to its target, is the diff of the target's own work since the two last agreed: a file it removed,
+// moved (previous_filename) or changed. It lists at most 300 files, so a long-running target can cut it short: that is recorded
+// (`base.sinceCut`), and a file with no entry then means "not seen", not "untouched". One request per PR that is behind, a few at a time.
+const SINCE_LIMIT = 40, SINCE_PARALLEL = 4, SINCE_FILES = 300;
+/** Compare's files -> Map(path -> {change: 'removed' | 'moved' | 'modified' | 'added', to?}) for the paths asked about. Pure. */
+export function sinceFromCompare(files, paths) {
+  const want = new Set(paths), out = new Map();
+  for (const f of Array.isArray(files) ? files : []) {
+    if (!f || typeof f.filename !== 'string') continue;
+    if (f.previous_filename && want.has(f.previous_filename)) out.set(f.previous_filename, { change: 'moved', to: f.filename });   // the file the PR means is now called something else
+    else if (want.has(f.filename)) out.set(f.filename, { change: f.status === 'removed' ? 'removed' : f.status === 'added' ? 'added' : 'modified' });
+  }
+  return out;
+}
+/** Add `since` to each file of the PRs that are behind, and `base.sinceCut` when compare may have left files out. Trouble only costs detail. */
+export async function addSince(prs, { repo, host = null, gh = 'gh', exec = defaultExec, limit = SINCE_LIMIT } = {}) {
+  const warnings = [], env = host ? { GH_HOST: host } : {}, behind = prs.filter((p) => p.base?.behind > 0 && SHA.test(p.headSha || '') && p.files?.length && !['merged', 'closed'].includes(p.status));
+  const looked = behind.slice(0, limit); if (behind.length > looked.length) warnings.push(`what the target changed since the branch point was read for ${looked.length} of ${behind.length} PRs that are behind`);
+  if (!looked.length) return warnings;
+  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { return [...warnings, `could not read what targets changed: ${e.message.split('\n')[0]}`]; }
+  let failed = 0, next = 0;
+  const one = async (p) => {
+    const text = await exec(gh, ['api', `repos/${owner}/${name}/compare/${p.headSha}...${encodeURIComponent(p.base.ref)}`, '--jq', '{files: [.files[]? | {filename, status, previous_filename}]}'], { env });
+    const files = JSON.parse(text)?.files; if (!Array.isArray(files)) throw new SyncError('no files in the answer');
+    const since = sinceFromCompare(files, p.files.map((f) => f.from || f.path));
+    for (const f of p.files) { const s = since.get(f.from || f.path); if (s) f.since = s; }
+    if (files.length >= SINCE_FILES) p.base.sinceCut = true;
+  };
+  await Promise.all(Array.from({ length: Math.min(SINCE_PARALLEL, looked.length) }, async () => { while (next < looked.length) { const p = looked[next++]; try { await one(p); } catch { failed++; } } }));
+  if (failed) warnings.push(`could not read what the target changed for ${failed} PR${failed > 1 ? 's' : ''}`);
   return warnings;
 }
 

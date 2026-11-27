@@ -2,13 +2,13 @@
 // derives "drift" insights: places where PR reality and ticket state disagree.
 import { synthHunks } from './hunks.js';
 
-export const CHANGES = ['added', 'removed', 'renamed', 'modified'];
+export const CHANGES = ['added', 'removed', 'renamed', 'modified'], SINCE = ['removed', 'moved', 'modified', 'added'];
 export const MERGEABLE = ['MERGEABLE', 'CONFLICTING', 'UNKNOWN'], MERGE_STATES = ['CLEAN', 'DIRTY', 'BEHIND', 'BLOCKED', 'UNSTABLE', 'HAS_HOOKS', 'DRAFT', 'UNKNOWN'];
 const safeRef = (r) => (typeof r === 'string' && r.length > 0 && r.length <= 250 && !/[\0-\x1f\x7f]/.test(r) ? r : null);
 /** What a PR targets, from outside: a branch name and GitHub's two verdicts, each checked against what it can be. Null when there is nothing usable. */
 export function normaliseBase(b) {
   const ref = safeRef(b?.ref); if (!ref) return null;
-  return { ref, mergeable: MERGEABLE.includes(b.mergeable) ? b.mergeable : 'UNKNOWN', mergeState: MERGE_STATES.includes(b.mergeState) ? b.mergeState : 'UNKNOWN', ...(Number.isInteger(b.behind) && b.behind >= 0 ? { behind: b.behind } : {}) };   // behind: commits the target has that the PR does not
+  return { ref, mergeable: MERGEABLE.includes(b.mergeable) ? b.mergeable : 'UNKNOWN', mergeState: MERGE_STATES.includes(b.mergeState) ? b.mergeState : 'UNKNOWN', ...(Number.isInteger(b.behind) && b.behind >= 0 ? { behind: b.behind } : {}), ...(b.sinceCut === true ? { sinceCut: true } : {}) };   // behind: commits the target has that the PR does not
 }
 export const STATUSES = ['review_requested', 're_review', 'changes_requested', 'ci_failing', 'ready_to_merge', 'draft', 'merged', 'closed'];
 
@@ -35,7 +35,8 @@ export function normalisePRs(input, identity = { prAuthors: ['you'] }) {
       const add = Math.max(0, Number(f.add) || 0), del = Math.max(0, Number(f.del) || 0);
       const real = Array.isArray(f.hunks) && f.hunks.length;
       const change = CHANGES.includes(f.change) ? f.change : undefined, from = change === 'renamed' && typeof f.from === 'string' && f.from && f.from !== f.path ? f.from : undefined;   // what happened to the file: added, removed, renamed (and from where) or just changed
-      return { path: f.path, ...(change ? { change } : {}), ...(from ? { from } : {}), add, del, hunks: real ? f.hunks.map((h) => ({ add: Math.max(0, +h.add || 0), del: Math.max(0, +h.del || 0), ...(Number.isFinite(+h.start) && +h.start >= 1 ? { start: Math.floor(+h.start) } : {}) })) : synthHunks(f.path, add, del), syntheticHunks: !real };
+      const since = f.since && SINCE.includes(f.since.change) ? { change: f.since.change, ...(f.since.change === 'moved' && typeof f.since.to === 'string' && f.since.to ? { to: f.since.to } : {}) } : undefined;   // what the target did to it since this PR branched
+      return { path: f.path, ...(change ? { change } : {}), ...(from ? { from } : {}), ...(since && (since.change !== 'moved' || since.to) ? { since } : {}), add, del, hunks: real ? f.hunks.map((h) => ({ add: Math.max(0, +h.add || 0), del: Math.max(0, +h.del || 0), ...(Number.isFinite(+h.start) && +h.start >= 1 ? { start: Math.floor(+h.start) } : {}) })) : synthHunks(f.path, add, del), syntheticHunks: !real };
     });
     prs.push({
       id: String(raw.id), number: raw.number ?? null, title: String(raw.title || raw.id), branch: raw.branch || '', author: raw.author || 'unknown',
