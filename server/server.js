@@ -23,8 +23,32 @@ function findThree() {
   return null;
 }
 
+let threeCache;
+const threeDir = () => (threeCache === undefined ? (threeCache = findThree()) : threeCache);
+
+function serveFile(res, root, rel) {
+  const abs = path.resolve(root, '.' + path.posix.normalize('/' + rel));
+  if (!abs.startsWith(root + path.sep) && abs !== root) { res.writeHead(404); return res.end('not found'); }
+  fs.readFile(abs, (err, data) => {
+    if (err) { res.writeHead(404); return res.end('not found'); }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(abs)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    res.end(data);
+  });
+}
+
+/** The web UI and the vendored three.js. Shared by one app and by the hub, which serves the same page for every city. */
+export function serveStatic(res, url) {
+  if (url.pathname.startsWith('/vendor/three/')) {
+    const dir = threeDir();
+    if (!dir) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('three is not installed. Run npm install in the battlemap folder.'); }
+    const rel = url.pathname.slice('/vendor/three/'.length);
+    if (!/^(build|examples\/jsm)\//.test(rel)) { res.writeHead(404); return res.end('not found'); }
+    return serveFile(res, dir, rel);
+  }
+  return serveFile(res, WEB, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
+}
+
 export function createApp({ store = new ConfigStore(), watch, notify, files = [], prs = [], sampleMode = false, log = () => {} } = {}) {
-  const threeDir = findThree();
   // Tracking choices sit next to the config. Mock Jira runs never write to disk, and neither do their picks.
   watch = watch || new WatchStore({ file: store.file.replace(/(\.json)?$/, '.watch.json'), persist: store.persist && !store.runtimeOverride });
   notify = notify || new NotifyStore({ file: store.file.replace(/(\.json)?$/, '.notify.json'), persist: store.persist && !store.runtimeOverride });
@@ -57,7 +81,8 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
     reconcile();
     return { count: list.length, problems };
   }
-  setPRs(prs);
+  // prs: null means "no feed yet": the PRs remembered from last time stay as they are until the first real feed arrives (the hub does this for a city it has just opened)
+  if (prs !== null) setPRs(prs);
 
   const prKeys = () => [...app.view.live, ...app.view.ended].map((p) => extractKey(p, store.get().jira.keyPattern)).filter(Boolean);
   const watchInfo = () => {
@@ -70,7 +95,7 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
       authors: [...new Set(app.prs.map((p) => p.author))].sort(),
     };
   };
-  const snapshot = () => withNotifications({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
+  const snapshot = () => withNotifications({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, ...(app.city ? { city: app.city } : {}), problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
   /** Alerts you have silenced move to their own list; the inbox goes to the browser newest first. */
   function withNotifications(snap) {
     const sil = notify.silencedIds(), n = notify.get();
@@ -255,35 +280,20 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
     return json(res, 404, { error: 'no such endpoint' });
   }
 
-  function serveFile(res, root, rel) {
-    const abs = path.resolve(root, '.' + path.posix.normalize('/' + rel));
-    if (!abs.startsWith(root + path.sep) && abs !== root) { res.writeHead(404); return res.end('not found'); }
-    fs.readFile(abs, (err, data) => {
-      if (err) { res.writeHead(404); return res.end('not found'); }
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(abs)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-      res.end(data);
-    });
-  }
-
-  app.server = http.createServer(async (req, res) => {
+  /** One request. The hub calls this directly for a city (with the city's prefix already stripped); a standalone app serves it itself. */
+  app.handle = async (req, res) => {
     try {
       if (!hostOk(req)) { res.writeHead(421); return res.end('unrecognised Host header'); }
       const url = new URL(req.url, 'http://x');
       if (url.pathname.startsWith('/api/')) return await api(req, res, url);
-      if (url.pathname.startsWith('/vendor/three/')) {
-        if (!threeDir) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('three is not installed. Run npm install in the battlemap folder.'); }
-        const rel = url.pathname.slice('/vendor/three/'.length);
-        if (!/^(build|examples\/jsm)\//.test(rel)) { res.writeHead(404); return res.end('not found'); }
-        return serveFile(res, threeDir, rel);
-      }
-      if (url.pathname === '/' ) return serveFile(res, WEB, 'index.html');
-      return serveFile(res, WEB, url.pathname.slice(1));
+      return serveStatic(res, url);
     } catch (e) {
       if (!res.headersSent) json(res, 500, { error: String(e.message || e) }); else res.end();
     }
-  });
+  };
+  app.server = http.createServer(app.handle);
 
-  app.threeInstalled = !!threeDir;
+  app.threeInstalled = !!threeDir();
   app.setPRs = (x) => { leaveSample(); const r = setPRs(x); broadcast(); return r; };
   app.watch = watch; app.notify = notify;
   /** Swap in a fresh file list (a rescan of the checkout). Returns whether anything changed. */
@@ -296,13 +306,15 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
     app.server.once('error', reject);
     app.server.listen(port, host, async () => {
       const a = app.server.address();
-      refreshJira().then(schedule);
+      app.start();
       resolve({ port: a.port, url: `http://${host === '0.0.0.0' ? 'localhost' : host}:${a.port}` });
     });
   });
+  /** Begin refreshing Jira on a timer. A city hosted by the hub starts when you go into it and stops when you leave. */
+  app.start = () => { refreshJira().then(schedule); };
+  app.stop = () => { clearTimeout(app.timer); app.timer = null; for (const r of app.sse) r.end(); app.sse.clear(); };
   app.close = () => new Promise((resolve) => {
-    clearTimeout(app.timer);
-    for (const r of app.sse) r.end();
+    app.stop();
     app.server.closeAllConnections?.();
     app.server.close(() => resolve());
   });

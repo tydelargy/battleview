@@ -1,4 +1,5 @@
-import { api } from './api.js';
+import { api, base, url } from './api.js';
+import { startWorld } from './worldui.js';
 import { SCALES, TOPPERS, scaleTicks, DIFF_COLORS, MIN_COVER } from './spires.js';
 import { authorColor, epicEmblem, flagLabel, EMBLEMS } from './sigil.js';
 import { STYLE_MODES, normaliseStyle, focusView } from './building.js';
@@ -113,7 +114,7 @@ function applyScene() {
   sc.setPRs(s.prs, { mode: state.scale, topper: state.topper, focusId: selPR && !selPR.ended ? state.sel : null, ageLift: state.ageLift, visible: new Set(live.map((p) => p.id)), fog: state.fog, statusColors, view: state.view });
 }
 function connectEvents() {
-  const es = new EventSource('/api/events');
+  const es = new EventSource(url('/api/events')); state.es = es;
   es.addEventListener('snapshot', () => { clearTimeout(pending); pending = setTimeout(() => refresh().catch(() => { /* server restarting: the reconnect sends a fresh snapshot event */ }), 120); });
   es.onerror = () => { /* the browser retries by itself */ };
 }
@@ -124,7 +125,7 @@ function renderAll() { renderHeader(); renderChips(); renderCards(); renderFocus
 function renderHeader() {
   const s = state.snap;
   const w = s.watch, open = s.prs.filter((p) => !p.ended).length;
-  $('sub').textContent = `${s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${w.mode === 'all' ? `${open} PRs` : `${open} tracked of ${w.feedCount} PRs`}${anyFilter(state.filters) ? ` · showing ${visiblePRs().filter((p) => !p.ended).length}` : ''}${s.mock ? ' · MOCK JIRA' : ''}`;
+  $('sub').textContent = `${s.city ? s.city.key + (s.city.estimated ? ' · sizes estimated' : '') + ' · ' : s.sampleMode ? 'sample repo · ' : ''}${s.files.length} files · ${w.mode === 'all' ? `${open} PRs` : `${open} tracked of ${w.feedCount} PRs`}${anyFilter(state.filters) ? ` · showing ${visiblePRs().filter((p) => !p.ended).length}` : ''}${s.mock ? ' · MOCK JIRA' : ''}`;
   const n = s.prs.filter((p) => p.needs).length, red = s.prs.filter((p) => p.status === 'ci_failing').length, rdy = s.prs.filter((p) => p.status === 'ready_to_merge').length;
   $('counters').replaceChildren(...[['NEEDS YOU', n, 'var(--accent)'], ['CI RED', red, 'var(--del)'], ['READY', rdy, 'var(--add)']].map(([l, v, c]) => h('div', { class: 'ctr' }, h('b', { style: `color:${c}` }, v), h('span', null, l))));
   const j = s.jira, dot = $('jiraDot'), txt = $('jiraTxt');
@@ -199,6 +200,12 @@ async function loadTransitions(prId) {
   renderFocus();
 }
 
+/** NEW / DELETED / MOVED beside a file in the PR panel, so a file the map has no building for is still plainly there. */
+function fileTag(f) {
+  const onMap = state.scene?.layout()?.byPath;
+  const [text, cls, tip] = f.change === 'removed' ? ['DELETED', 'del', 'This PR deletes the file'] : f.change === 'renamed' && f.from ? ['MOVED', 'mv', `Moved from ${f.from}`] : (f.change === 'added' || (onMap && !onMap.has(f.path))) ? ['NEW', 'add', 'A new file: not on the map until it is merged'] : [null];
+  return text ? h('i', { class: `chg ${cls}`, title: tip }, text) : null;
+}
 function renderFocus() {
   const box = $('focus'), s = state.snap, pr = s.prs.find((p) => p.id === state.sel);
   if (!pr) { box.hidden = true; return; }
@@ -248,7 +255,7 @@ function renderFocus() {
       h('div', { class: 'files' }, pr.files.slice().sort((a, b) => b.add + b.del - (a.add + a.del)).map((f) => {
         const name = f.path.split('/').pop(), dir = f.path.slice(0, f.path.length - name.length);
         return h('button', { class: 'frow', onclick: () => state.scene?.flyToFile(f.path), onmouseenter: () => state.scene?.setHighlight([f.path]), onmouseleave: () => state.scene?.setHighlight([]), onfocus: () => state.scene?.setHighlight([f.path]), onblur: () => state.scene?.setHighlight([]) },
-          h('span', { class: 'nm' }, h('small', null, dir), name), h('span', { class: 'ct' }, h('span', { class: 'a' }, `+${f.add}`), h('span', { class: 'd' }, `−${f.del}`)),
+          h('span', { class: 'nm' }, h('small', null, dir), name, fileTag(f)), h('span', { class: 'ct' }, h('span', { class: 'a' }, `+${f.add}`), h('span', { class: 'd' }, `−${f.del}`)),
           h('div', { class: 'bar', style: `width:${((f.add + f.del) / maxFile) * 100}%` }, h('i', { class: 'a', style: `width:${(f.add / (f.add + f.del || 1)) * 100}%` }), h('i', { class: 'd', style: `width:${(f.del / (f.add + f.del || 1)) * 100}%` })));
       }))),
     h('div', { class: 'blk' }, h('h3', null, 'JIRA'), ticket),
@@ -434,6 +441,7 @@ function openKey() {
         h('li', null, h('b', null, 'Scaffolding'), ' (green, with a ring in the PR colour at the top) = a focused PR\u2019s additions in the Facade view: it climbs the walls as high as lines added on the one scale (never past the fully walled part), and the deletions stack as taped floors on the roof.'),
         h('li', null, h('b', null, 'Belts on the building'), ' (Layers > Focused PR > File) = the building is the file, line 1 at the roof and the last line at the ground. Every hunk is a belt at its place in the file, green for lines added with the red for lines deleted under it, as thick as the share of the file it covers. A ruler up one corner marks every quarter. Hunks without line numbers are spread evenly in file order.'),
         h('li', null, h('b', null, 'Crates and a skip'), ' (Layers > Focused PR > Crates, the default in Buildings) = the focused PR\u2019s change as a yard: additions are a solid stack of green crates on a pallet, deletions are a rubble heap in a red skip beside it. Same footprint and level height, as many levels as the lines need on the one scale, so count the levels.'),
+        h('li', null, h('b', null, 'New, moved and deleted files'), ' (Buildings style). A file a PR creates is not in the default branch, so the map makes room for it: an empty ', h('b', null, 'green scaffold'), ' standing where the building will go, as big as the file will be. A file a PR moves wears ', h('b', null, 'yellow scaffolding'), ' round its old building and an empty yellow one at its new home, joined by a dashed arc. A file a PR deletes is ', h('b', null, 'condemned'), ': a see-through red shell in the building\u2019s own shape, a big red X of tape across its roof, red tape in an X down every wall, rubble beside it (no red rings: those are the belts of a file\u2019s deleted lines). All of it shows whatever PR is focused, and nothing moves when you focus another: the map only changes when the set of tracked PRs does. The PR panel tags these files NEW, MOVED and DELETED.'),
         h('li', null, h('b', null, 'Red-taped floor'), ' = lines were deleted. An emptied floor with red tape in an X on every face. The stack is as tall as lines deleted on that same scale (one floor is 2.4 of it, up to 24 floors); focused, it is one tower on the right of the roof, the same size as the additions tower.'),
         h('li', null, 'The Plain and Colours styles keep the plain toppers in the overview, but a focused PR can use these same views there too (Layers > Focused PR; Hunks, the classic stack, is their default).')),
       h('h3', null, 'FOCUSED PR'),
@@ -720,6 +728,33 @@ addEventListener('keydown', (e) => {
 });
 window.battlemap = { state, selectPR, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
 
-await startScene();
-await refresh();
-connectEvents();
+/* ---------- boot: one map, or (served by the hub) a world of cities you can go into ---------- */
+async function enterCity() { await startScene(); await refresh(); connectEvents(); }
+function leaveCity() {
+  state.es?.close(); state.es = null; clearTimeout(pending);
+  state.scene?.dispose(); state.scene = null; state.snap = null; state.sel = null; state.known = null; state.knownNotifs = null; state.notifBaseline = null; state.transitions = null; state.nprOpen = false;
+  for (const id of ['focus', 'alerts', 'notifs', 'filters', 'layers', 'filebar', 'tip', 'nogl']) { const e = $(id); if (e) e.hidden = true; }
+  $('cards').replaceChildren(); $('chips').replaceChildren(); $('counters').replaceChildren();
+}
+const hubMode = await fetch('/api/hub/world').then((r) => r.json()).then((j) => Array.isArray(j.cities)).catch(() => false);
+if (!hubMode) { await enterCity(); }
+else {
+  document.body.classList.add('hub');
+  let world = null;
+  const route = async () => {
+    const m = location.hash.match(/^#\/r\/([a-z0-9_.-]+(?:--[a-z0-9_.-]+){1,2})$/);
+    if (m) {
+      world?.dispose(); world = null; base.prefix = `/r/${m[1]}`; document.body.classList.add('in-city'); $('world').hidden = true; $('worldBtn').hidden = false;
+      await enterCity();
+    } else {
+      if (state.snap || state.scene) leaveCity();
+      base.prefix = ''; document.body.classList.remove('in-city'); $('worldBtn').hidden = true; $('world').hidden = false;
+      if (!world) world = startWorld({ host: $('world'), onEnter: (id) => { location.hash = `#/r/${id}`; }, toast });
+      else world.refresh();
+      window.battlemap.world = world;
+    }
+  };
+  $('worldBtn').onclick = () => { location.hash = '#/'; };
+  addEventListener('hashchange', route);
+  await route();
+}

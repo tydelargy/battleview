@@ -5,10 +5,15 @@ toppers standing on the buildings they change, and Jira tickets hang off the PRs
 
 ```
 npm install          # pulls three.js
-npm start            # sample repo + sample PRs         -> http://localhost:4747
-npm run mock         # same, plus a fake Jira to play with
-battlemap --repo ~/code/my-project --prs prs.json        # your repo, your PRs
+npm start            # the app: a world of cities, one per repo     -> http://localhost:4747
+npm run mock         # try it with nothing connected: a pretend GitHub and a fake Jira
 ```
+
+Battle Map is one app. It opens on a **world** where every repo is a small city on its own hex of land; click a city to go into its map (files as buildings, PRs standing on them, Jira tickets hanging off them), and add a repo by its URL with the **+** on a free hex. Nothing is cloned: repos are read through the [GitHub CLI](https://cli.github.com) (`gh auth login`).
+
+**In the mock** (`npm run mock`) the world starts with one city, `acme/platform` (the built-in sample). Hover a glowing free hex beside it, press **+**, and add `acme/billing-api` or `acme/mobile-app`: they exist only in the pretend GitHub. Go in, track a teammate's PR (**+ TRACK PRS**), come back out with **ALL REPOS**, and the world shows what you track. The mock keeps nothing between runs.
+
+Older single-map modes still work: `npm run sample`, or `battlemap --repo ~/code/my-project --prs prs.json`.
 
 Needs Node 20+. `npm link` gives you a global `battlemap` command.
 
@@ -20,6 +25,7 @@ Needs Node 20+. `npm link` gives you a global `battlemap` command.
 * **Buildings.** Every file also gets a look of its own, derived from a hash of its path: a shade inside its folder's colour, a silhouette (block, stepped, crown, L-shape, tower on a podium, terraced slabs or twin towers), a wall material (concrete, brick, stone or steel), a window pattern with its own window size, share of lit windows and warm glow, and a rooftop detail (antenna, water tank, vents). Each building also keeps a margin of its own inside its lot, so there are gaps and a mix of widths, like blocks of a city. The same file always looks the same, so neighbours in one folder are easy to tell apart without reading labels, and the folder colour still reads from far away. A short **index code** on each roof (`C-14`) gives people a name to say out loud: "look at C-14". It also shows in the hover tip and the file bar. Footprint still follows lines of code and height still follows complexity.
 * **Toppers.** Each PR that touches a file raises a column on that roof. Its **width** is the share of the file the PR changes (at least 20%, so one-line edits still show), and two PRs on one file split the roof. Its **height** is lines changed (adds + dels) on one global scale, so any two toppers on the map compare by eye. Layers > Spires switches the height scale between square root (default), linear and log, and the width between "Share of file" and "Slim".
 * **Construction sites** (Layers > Buildings > Buildings; Plain and Colours keep the toppers). One rule keeps them comparable: **height is lines, on the one global scale the toppers use**. A PR that adds code to a file puts a **tower crane** on its roof, in the PR's status colour so it matches the flag. The whole crane is scaled by the lines added, whatever the file or roof, so 9 lines is the same small crane everywhere and 400 lines a big one. The flat **pad** under it is the share of the file changed (at least 20%), so that fact is still there without bending the size. A PR that **deletes** lines adds a **red-taped floor** stack, an emptied open frame with an X of tape on every face, as tall as the lines deleted on that same scale (one floor is 2.4 units, up to 24). **Focus a PR** and each of its files shows the change in the style you pick under Layers > Focused PR (which every building style offers: on Plain and Colours the overview keeps its toppers and only the focused PR changes, with the classic **Hunks** stack as their automatic choice). **Crates** (the default) is a yard on the roof: **additions on the left** as a solid stack of green crates on a pallet, **deletions on the right** as a rubble heap in a red skip. Both sides have the same footprint, the same baseline and the same 2.4-unit level height, and each is as many levels as its lines need on the one scale, so how much was added against how much was deleted is two stacks you can count; a side with nothing in it shows just its flat pad. **Facade** draws the additions as green scaffolding up the building's walls (with a ring in the PR colour on top, as high as the lines added, up to the building's fully walled height) and the deletions as red-taped floors on the roof. **File** makes the building the file: line 1 at the roof, the last line at the ground, and each hunk a green (added) and red (deleted) **belt** around the building at its place in the file, as thick as the share of the file it covers, following the tiers of the silhouette, with a ruler up one corner. It answers where in the file and how much of it; hunks may carry an optional `start` line (in the new file) to be placed exactly, and without it they are spread evenly in file order. Every other PR turns to glass. Two PRs on one roof, two cranes.
+* **New, moved and deleted files.** The map is the default branch, so a file a PR *creates* is not on it yet. The map makes room for it: an empty **green scaffold** stands where the building will go, as big as the file will be (its lines set the footprint, the same rules as every building). A file a PR *moves* gets **yellow scaffolding** wrapped round its old building and an empty yellow scaffold at its new home, joined by a dashed arc; and a file a PR *deletes* is **condemned**: a see-through red shell in the building's own shape (every tier), a big red X of tape across the roof, red tape in an X down every wall, and rubble beside it. It deliberately has no red rings, so it cannot be mistaken for the red belts of a file's deleted lines. These show for every tracked PR whether or not it is focused, and the map is laid out with all of them in it, so nothing moves because you looked at another PR; it only changes when the set of tracked PRs does. The PR panel tags each file NEW, MOVED or DELETED. (GitHub's file change types come from one GraphQL request for twenty PRs, plus one call for a PR that renames something, to learn the old name.)
 * **Contested files** (two or more PRs) get a static amber frame around the roof.
 * **Focus a PR** (tap a card, flag or topper). Its columns split into hunks: red for deleted lines, green for added, heights proportional to lines. Every other PR turns to glass. Per-file `+n -n` floats over each topper and the left panel lists every file with a green/red bar. Moving dotted lines run from the flag to every file it touches.
 * **Flags** are PRs, and each fact has its own channel so they can be told apart from far away: the text is the PR number, ring colour = status, fill = author, the corner emblem (shape and hue) = epic, gold pulse = needs you. Every PR in one epic wears the same emblem. **Fog of war** dims files nobody is working on.
@@ -163,6 +169,50 @@ Notifications are worked out on the server by comparing each tracked PR with how
 **Alerts** (the flag icon: ticket Done but PR open, PR with no ticket, and the rest) can be silenced one at a time with the ✕, or all at once. Silenced alerts move to a list you can reopen to restore them. That is the way to stop seeing, say, "no ticket key" on a PR that will never have one.
 
 Notifications, your defaults and per-PR overrides, and silenced alerts are saved next to the config as `config.notify.json` (mode 0600), except under `--mock-jira`. Desktop (system) notifications are not part of this; it is in-app only.
+
+## Install
+
+Pick one. All of them run the same thing: `battlemap`, the world of cities below, on http://127.0.0.1:4747. They read GitHub through the [GitHub CLI](https://cli.github.com) (`gh auth login`; for Enterprise `gh auth login --hostname ghe.example.com`), so Battle Map never handles a token, and nothing is ever cloned.
+
+| | what you get | needs |
+|---|---|---|
+| **AppImage** (Linux) | one file with its own Node: `chmod +x Battle-Map-*.AppImage && ./Battle-Map-*.AppImage` | nothing |
+| **`.deb`** (Debian, Ubuntu) | `sudo apt install ./battlemap_*.deb`: a `battlemap` command and a menu entry | `nodejs` 20+ (declared) |
+| **Local web** (any Linux) | unpack `battlemap-*-linux-x64.tar.gz`, run `./install.sh`: installs under `~/.local`, adds a menu entry and a systemd user service so the page is always there. No root. | Node 20+ |
+| **Windows** | `Battle-Map-*-Setup.exe` (unpacks to `%LOCALAPPDATA%\Battle Map` and starts), or the portable `Battle-Map-*-win-x64.zip` (run `Battle Map.cmd`) | nothing |
+
+Launching it twice just opens the page again. `battlemap --stop` stops what the launcher started (Linux); the service version is `systemctl --user stop battlemap`.
+
+**Build them yourself** (a checkout with `npm ci` done; the Node, AppImage and SFX pieces are downloaded once, pinned by SHA-256, into `packaging/.cache`):
+
+```
+npm run package            # everything below that your machine can build, into dist/
+npm run package:appimage   # needs mksquashfs (squashfs-tools)
+npm run package:deb        # needs dpkg-deb (and fakeroot, if you are not root)
+npm run package:tarball
+npm run package:win        # needs 7z (p7zip-full); builds on Linux, but only runs on Windows
+```
+
+The Windows setup is a self-extracting archive (7-Zip's SFX stub): it has been built and inspected but not run on a Windows machine yet.
+
+## All your repos on one map
+
+Battle Map's first page is the **world**, and there is no separate mode to turn on: every repo is a small city on its own hex of land, the cities sit side by side, and nothing connects them. A city's hill gets a biome (meadow, forest, desert, tundra, volcanic, savanna, marsh, alpine) from a hash of its `org/name`, so a repo always grows the same plot.
+
+![The world: four cities on their hills, the hovered one showing its numbers](docs/screenshots/world.png)
+
+* **Every repo has a card** along the bottom, like the PR cards: its name, a badge for how many PRs need you, and three numbers: how many PRs you are *tracking* there, how many *you* have open, and how many *need action*. Pointing at a city lights up its card; click a card to expand it in place (details, **GO IN**, **FORGET**) while the others stay in reach. **Click a city** to go in (the full map you know, for that repo), and the **ALL REPOS** button brings you back. The numbers come from one light `gh pr list` per repo; a city's PRs are only read in full, and kept fresh, while you are in it.
+* **Drag a city** onto another free hex to move it. The map keeps itself together: a city can only move to an empty hex that touches another city, and never in a way that splits the group in two. Layout is saved.
+* **Hover a glowing free hex** (the faint ones beside the group) and press **+** to add a repo by URL (`https://github.com/org/repo`, `org/repo`, or an Enterprise URL). **Nothing is ever cloned.** The city is built from what GitHub says about the default branch (`gh api`: the file tree), so file sizes are estimates (about 38 bytes to a line) and the map says so. Jira is shared by every city, and each city has its own tracking rules, picks and notifications.
+* **Forget** (on the expanded card, asks twice) removes a city and its saved state.
+* **Any repo, any size.** A city is drawn from at most a few hundred of its biggest files (fewer as the world fills up), buildings have a ceiling however big a file is, and bad or odd paths and sizes are cleaned or dropped, so a repo with a hundred thousand files costs the same to draw as one with ten.
+
+```
+battlemap                            # data in ~/.local/share/battlemap  (--data DIR to change it)
+battlemap --demo --mock-jira         # the pretend GitHub and fake Jira (what `npm run mock` runs)
+```
+
+`--sample`, `--repo` and `--prs` still open a single map, as before.
 
 ## Running it for real
 

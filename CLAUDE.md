@@ -7,7 +7,7 @@ A local, single-user tool: a tactical map of a codebase (files are buildings, fo
 ```
 npm test                 # unit, server and scene-wiring tests. Fast. No browser.
 npm run e2e              # real Chrome against a real server: Jira flows, PR tracking, filters and sorting, notifications and alerts
-npm start | npm run mock # sample repo and PRs | the same plus a fake Jira
+npm start | npm run mock # the app (a world of cities) | the same with a pretend GitHub and a fake Jira; `npm run sample` is the old single map
 SHOTS_DIR=docs/screenshots node e2e/shot2.mjs readme   # regenerate every README screenshot
 ```
 
@@ -25,9 +25,14 @@ server/snapshot.js        joins repo files, tracked PRs and Jira into the one ob
 server/providers/         code-host adapters for the sync: a PURE mapper (normalisePR) plus a runner that takes an injectable `exec`. github.js today; GitLab would be a sibling
 server/feedwatch.js       watches the feed's DIRECTORY, because a watch on the file dies when sync renames a new file over it
 server/notify.js          notifications: PURE detection (`detectEvents`, `shouldNotify`, `eventsFor`) plus a file-backed store for the inbox, policy and silenced alerts
+server/demo.js            a pretend GitHub (acme/platform = the built-in sample, acme/billing-api, acme/mobile-app) for `--demo` / `npm run mock`; the hub takes it as its provider
+server/hub.js             the app: many repos in one process (plain `battlemap`): the list of cities, each built from the remote alone, one isolated app per city under /r/<id>/
 server/watch.js           which PRs are tracked (picks, author and path rules, ended PRs). PURE matching + a small file-backed store
 server/config.js          config file (0600), Jira settings validation, token redaction
+packaging/build.mjs    builds dist/ (deb, AppImage, tarball, Windows zip and setup .exe); downloads are pinned by SHA-256. `test/packaging.test.js` runs the staged app and checks every layout. Change a layout, change the test
 web/layout.js spires.js sigil.js building.js sites.js    PURE geometry and identity (sites.js: the construction-site look of the diff layer, Buildings style, plus the focus views File belts, Crates and Facade (plus the classic Hunks stack), which every style can use for a focused PR; layering rules below; building.js: hash-derived colour, silhouette, windows, index code, roofs; planSpires takes a `roofs` map so toppers stand on them). No DOM, no three. Unit tested
+web/hex.js biome.js cityshape.js terrain.js    PURE world view: hex grid and the placement rules (cities touch, no splitting the group), a biome per repo name, a city's files as a bounded set of boxes (cityshape.js treats its input as untrusted), and where things may stand on a plot (terrain.js)
+web/world.js worldui.js   the world view: Three.js plots and drag, then the stats widget, the + and the add dialog. Look and move only: no PRs, no diffs
 web/filters.js            PURE filter and sort model ("needs attention first" is a tiered comparator; see `attentionTier`) for the PR tray and the map (one model: search, authors, status, age, needs-me, epic). Takes `now` as an argument
 web/scene.js              Three.js glue: instanced meshes, camera, SVG/HTML overlay. Only checked by a smoke test with a stand-in three
 web/main.js               panels, dialogs, settings. All feed data goes in through h()/fill() as text nodes, never HTML
@@ -48,6 +53,9 @@ web/main.js               panels, dialogs, settings. All feed data goes in throu
   - **Order of layers, always:** the building's base colour, then the wall texture, then windows, painted in that order inside one shader, never as overlapping meshes. For geometry added over a building the order is wall < added structure < deletions: a red (deleted) belt or rail stands proud of a green (added) one, which stands proud of the wall.
   - **Geometry:** no two boxes may have faces that point the same way, lie in the same plane (within 0.08 units) and overlap. Give every layer its own thickness or outset (0.1 or more), butt the corners of rings instead of overlapping them, start a stack above the pad it stands on, stop posts below the rail that caps them, and pack things that could overlap (belts) top to bottom with a gap. `test/coplanar.js` finds these; `test/sites.test.js` runs it over every focus view and every building shape, so a new shape or view must pass it.
   - **Shaders:** per-instance data goes through `flat` varyings and is rounded before it becomes an integer (an interpolated 12345.0 can arrive as 12344.99998 and `uint()` truncates it: per-pixel noise). Compute every `fwidth()` before any branch, never inside one. Anti-alias edges and fade to an average colour when a feature is under about three pixels, so nothing shimmers.
+- **Things stand on the land, in hexagon terms.** A plot is a hexagon with a sloping skirt, not a circle: measure distance with `hexNorm`, set props on `surfaceHeight`, and scale a city with `cityScale` so all of it is on the flat summit. Never position by a circle radius or a hand-tuned height. `test/terrain.test.js` checks every prop of 400 biomes is on the ground, inside the rim and clear of the city; `test/cityshape.test.js` checks the mini-city for junk, giants and 120k-file repos. Change `web/world.js`'s geometry only through `PLOT`/`plotGeometry`.
+- **The map never moves because of what you look at.** New and moved-to files of every tracked PR are laid out with the real files (`layoutFor` in `web/scene.js`, `ghostFiles` in `web/placement.js`), so the layout depends only on which PRs are tracked, never on focus, filters or hover. Do not re-lay the map for the focused PR, or for the visible set. `test/placement.test.js` and the scene smoke test check it.
+- **Nothing is ever cloned.** A repo added to the hub is built from `gh api` alone (default branch, then its file tree; sizes are estimated from bytes) and its PRs from `gh pr list`. Never add `git clone`, `gh repo clone` or a checkout to the hub path: `test/hub.test.js` fails if the hub runs anything but `gh api` and `gh pr`. A city's PRs are only fetched in full while someone is in it; the world view asks for three numbers per city.
 - **A copy of the pure modules is loaded by the browser as-is** (no bundler). Use plain ES modules, no Node-only imports under `web/`.
 
 ## Conventions

@@ -5,7 +5,7 @@ let chromium;
 try { ({ chromium } = await import('playwright')); } catch { chromium = createRequire(process.env.PLAYWRIGHT_DIR || '/home/claude/.npm-global/lib/node_modules/')('playwright').chromium; }
 const out = process.argv[2] || '/tmp/shot';
 const port = 4810;
-const srv = spawn('node', ['bin/battlemap.js', '--mock-jira', '--port', String(port), '--mock-port', '4811', '--config', '/tmp/shot-cfg.json'], { stdio: ['ignore', 'pipe', 'inherit'] });
+const srv = spawn('node', ['bin/battlemap.js', '--sample', '--mock-jira', '--port', String(port), '--mock-port', '4811', '--config', '/tmp/shot-cfg.json'], { stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((r) => srv.stdout.on('data', (d) => /Battle Map at/.test(String(d)) && r()));
 const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 try {

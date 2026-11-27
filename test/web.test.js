@@ -103,3 +103,23 @@ test('packRoof tiles shared roofs without overlap and coverage has a floor', () 
   assert.equal(coverage(1, 1000), MIN_COVER);
   assert.equal(coverage(2000, 1000), 1);
 });
+
+// A district's padding and name room are fixed sizes, so in a small district they used to be bigger than the district and swallowed
+// every file in it: a repo with 3,000 files in 600 folders came out with no buildings at all.
+const manyFolders = (files, dirs, depth = 2) => Array.from({ length: files }, (_, i) => ({ path: `${Array.from({ length: depth }, (_, d) => `${'dsx'[d % 3]}${Math.floor(i / (d ? 1 : 1)) % (d ? 7 : dirs)}`).join('/')}/f${i}.ts`, loc: 5 + ((i * 7919) % 700), complexity: i % 30 }));
+test('layout: every file gets a place however many folders there are', () => {
+  for (const [files, dirs, depth] of [[500, 100, 2], [3000, 600, 2], [6000, 2000, 2], [2000, 300, 4], [6000, 60, 2], [300, 300, 1], [1000, 1000, 3]]) {
+    const F = manyFolders(files, dirs, depth), L = buildLayout(F);
+    assert.equal(L.leaves.length, files, `${files} files in ${dirs} folders (depth ${depth}): ${L.leaves.length} placed`);
+    for (const l of L.leaves) { assert.ok(l.r.w > 0 && l.r.h > 0 && Number.isFinite(l.mx + l.my), 'a real footprint'); assert.ok(l.x >= -1e-6 && l.y >= -1e-6 && l.x + l.w <= WORLD.w + 1e-6 && l.y + l.h <= WORLD.h + 1e-6, 'inside the world'); }
+  }
+});
+test('layout: tiny folders beside a huge one, and a lone file in a lone folder, are all placed', () => {
+  const skew = [{ path: 'big/a.ts', loc: 200000 }, ...Array.from({ length: 40 }, (_, i) => ({ path: `tiny${i}/x.ts`, loc: 3 }))]; assert.equal(buildLayout(skew).leaves.length, 41);
+  assert.equal(buildLayout([{ path: 'only/one.ts', loc: 1 }]).leaves.length, 1); assert.equal(buildLayout([{ path: 'a/b/c/d/e/f/g/h.ts', loc: 1 }, { path: 'z.ts', loc: 100000 }]).leaves.length, 2);
+});
+test('layout: files in small folders do not overlap, and the layout stays the same for the same files in any order', () => {
+  const F = manyFolders(400, 80, 2), L = buildLayout(F), R = buildLayout([...F].reverse()), ls = L.leaves;
+  assert.deepEqual(L.leaves.map((l) => [l.path, l.x, l.y, l.w, l.h]), R.leaves.map((l) => [l.path, l.x, l.y, l.w, l.h]), 'order of input does not matter');
+  for (let i = 0; i < ls.length; i++) for (let j = i + 1; j < ls.length; j++) { const a = ls[i].r, b = ls[j].r; assert.ok(a.x + a.w <= b.x + 1e-6 || b.x + b.w <= a.x + 1e-6 || a.y + a.h <= b.y + 1e-6 || b.y + b.h <= a.y + 1e-6, `${ls[i].path} overlaps ${ls[j].path}`); }
+});

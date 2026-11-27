@@ -131,7 +131,8 @@ const show = (bad) => bad.slice(0, 3).map((x) => `${x.a.tone || 'wall'}/${x.b.to
 test('layering: no visible coplanar faces in any building shape', () => {
   for (const shape of [0, 1, 2, 3, 4, 5, 6]) for (const v of [0.1, 0.9]) {
     const { parts, roof } = silhouette(shape, { x: 10, y: 20, w: 20, h: 12 }, 30, v);
-    for (const k of [0, 1, 2]) assert.deepEqual(coplanarOverlaps([...parts, ...roofGear(k, roof, 30)]), [], `shape ${shape} gear ${k}`);
+    const centred = (list) => list.map((p) => ({ ...p, x: p.x + p.w / 2, y: p.y + p.d / 2 }));   // building parts are corner-based, the checker is centre-based
+    for (const k of [0, 1, 2]) assert.deepEqual(coplanarOverlaps(centred([...parts, ...roofGear(k, roof, 30)])), [], `shape ${shape} gear ${k}`);
   }
 });
 
@@ -147,4 +148,67 @@ test('layering: belts, rails, scaffolding, crates, floors and cranes never put t
   assert.deepEqual(coplanarOverlaps(tapeFloor({ x: 0, y: 0, w: 12, d: 7 }, 0, 2.4)), [], 'taped floor');
   assert.deepEqual(coplanarOverlaps(scaffoldParts({ x: 0, y: 0, w: 20, h: 12 }, 15)), [], 'scaffold');
   assert.deepEqual(coplanarOverlaps(scaffoldParts({ x: 0, y: 0, w: 6, h: 6 }, 7, { pad: 0, lift: 2.4, z0: 4, ground: false, t: 0.3 })), [], 'small scaffold tower');
+});
+
+// ---- files that go, move and come: condemned buildings, amber move tape, construction sites ----
+import { condemnedParts, frameParts } from '../web/sites.js';
+test('a condemned building: a see-through red shell in its own shape, an X on the roof and on every wall, rubble beside it; no rings; layered', () => {
+  const tiersOf = (shape) => silhouette(shape, { x: 10, y: 10, w: 30, h: 18 }, 24, 0.4);
+  for (const shape of [0, 1, 2, 3, 4, 5, 6]) {
+    const sil = tiersOf(shape), shell = { rect: { x: 10, y: 10, w: 30, h: 18 }, h: sil.shell, H: 24, profile: sil.parts, roof: sil.roof, id: `f${shape}.ts` };
+    const { parts, top } = condemnedParts(shell), shells = parts.filter((p) => p.tone === 'hazard'), diag = parts.filter((p) => p.diag), flat = diag.filter((p) => p.flat), wall = diag.filter((p) => !p.flat);
+    assert.equal(shells.length, sil.parts.length, `one red shell per tier (shape ${shape})`); assert.equal(top, shell.h);
+    assert.ok(shells.every((p, i) => p.w > sil.parts[i].w && p.d > sil.parts[i].d && Math.abs(p.z + p.h - (sil.parts[i].z + sil.parts[i].h)) < 1e-9 && Math.abs(p.z - sil.parts[i].z) < 0.1 * 7), 'each stands just outside its tier, to the same top');
+    assert.equal(flat.length, 2, 'a two-strip X across the roof'); assert.ok(flat.every((p) => p.z > sil.roof.z && p.tone === 'tape' && p.len > 0.8 * Math.min(sil.roof.w, sil.roof.h)), 'on top of the roof, red, as long as the roof');
+    assert.deepEqual(flat.map((p) => Math.sign(p.angle)).sort(), [-1, 1], 'crossing'); assert.equal(wall.length, 8, 'two diagonals on each of four walls');
+    assert.ok(!parts.some((p) => p.tone === 'tape' && !p.diag), 'no rings or bands: they would look like the red belts of a file\'s deleted lines');
+    assert.ok(parts.filter((p) => p.tone === 'rubble' || p.tone === 'rubble2').length === 9, 'rubble');
+    assert.deepEqual(coplanarOverlaps(parts), [], `layering (shape ${shape})`);
+    for (const p of parts.filter((q) => q.tone === 'rubble' || q.tone === 'rubble2')) assert.ok(p.y - p.d / 2 > shell.rect.y + shell.rect.h + 0.5, 'rubble sits clear of the building');
+    assert.ok(parts.every((p) => p.diag ? p.len > 0 && Number.isFinite(p.x + p.y + p.z) : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= 0), 'sound boxes');
+    assert.ok(Math.max(...parts.filter((p) => p.tone.startsWith('rubble')).map((p) => p.z + p.h)) <= shell.h / 3 * 2 + 1e-9, 'rubble never tall');
+  }
+  const plain = condemnedParts({ rect: { x: 0, y: 0, w: 4, h: 3 }, h: 3 }); assert.equal(plain.parts.filter((p) => p.tone === 'hazard').length, 1, 'a building with no tier information is one box');
+  assert.deepEqual(condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'same' }), condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'same' }), 'the rubble is the same every time');
+  assert.notDeepEqual(condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'one' }).parts.filter((p) => p.tone.startsWith('rubble')), condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'two' }).parts.filter((p) => p.tone.startsWith('rubble')), 'and different for another file');
+});
+
+test('a building moving out is wrapped in yellow scaffolding: poles and ledgers all the way up, nothing but yellow', () => {
+  const shell = { rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14 }, { parts, top } = siteParts({ x: 20, y: 20, w: 8, d: 5, z0: 14, total: 9, parts: [], add: 0, del: 0, focused: false, change: 'moved-out' }, shell, { heightOf: height });
+  assert.ok(parts.every((p) => p.tone === 'move') && parts.length > 12); assert.equal(top, 14); assert.deepEqual(coplanarOverlaps(parts), []);
+  assert.ok(Math.max(...parts.filter((p) => !p.diag).map((p) => p.z + p.h)) <= 14 + 1e-9 && parts.some((p) => !p.diag && p.h > 12), 'as tall as the building');
+  const xs = parts.filter((p) => !p.diag).flatMap((p) => [p.x - p.w / 2, p.x + p.w / 2]); assert.ok(Math.min(...xs) < 10 && Math.max(...xs) > 40, 'wrapped around the building, a little outside its walls');
+});
+
+test('a column for a removed file or the old home of a move becomes that building taped, whatever the focus view', () => {
+  const shell = { rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14 }, base = { x: 20, y: 20, w: 8, d: 5, z0: 14, total: 9, parts: [{ dz: 0, h: 9, kind: 'pr' }], add: 0, del: 90, focused: false, path: 'a/gone.ts' };
+  for (const focused of [false, true]) for (const focusStyle of ['crates', 'lines', 'facade']) {
+    const gone = siteParts({ ...base, focused, change: 'removed' }, shell, { heightOf: height, focusStyle }), mv = siteParts({ ...base, focused, change: 'moved-out' }, shell, { heightOf: height, focusStyle });
+    assert.ok(gone.parts.some((p) => p.tone === 'tape') && gone.parts.some((p) => p.tone === 'rubble' || p.tone === 'rubble2') && !gone.parts.some((p) => p.tone === 'status'), 'no crane on a building that is coming down');
+    assert.ok(mv.parts.every((p) => p.tone === 'move'));
+  }
+  assert.ok(siteParts({ ...base, change: 'modified', add: 20, del: 0 }, shell, { heightOf: height }).parts.some((p) => p.tone === 'status'), 'a modified file is unchanged: a crane');
+  assert.ok(siteParts({ ...base, change: 'removed' }, null, { heightOf: height }).parts.length > 0, 'with no building shape it falls back to the ordinary column rather than throwing');
+});
+
+test('a lot for a new file: an empty scaffold frame as big as the building it will be, on a flat pad, green; yellow for the place a move is going to', () => {
+  for (const shell of [{ rect: { x: 30, y: 12, w: 40, h: 22 }, h: 20, H: 26 }, { rect: { x: 0, y: 0, w: 3, h: 2 }, h: 3 }, { rect: { x: 5, y: 5, w: 120, h: 80 }, h: 70, H: 80 }]) for (const tone of ['add', 'move']) {
+    const { parts, top } = frameParts(shell, { tone }), H = Math.max(FLOOR_H, shell.H ?? shell.h);
+    assert.ok(parts.some((p) => p.tone === (tone === 'move' ? 'movePad' : 'addPad')), 'a flat pad'); assert.ok(parts.filter((p) => p.tone === tone).length > 8, `${tone} poles, ledgers and braces`);
+    assert.ok(parts.filter((p) => p.tone !== 'movePad' && p.tone !== 'addPad').every((p) => p.tone === tone), 'one colour, ring included');
+    assert.ok(!parts.some((p) => ['ghost', 'status', 'statusDark', 'metal'].includes(p.tone)), 'empty: no body, no crane');
+    assert.ok(Math.abs(top - (H + 0.2)) < 1e-9 && Math.abs(Math.max(...parts.filter((p) => !p.diag).map((p) => p.z + p.h)) - (H + 0.2)) < 1e-6, 'exactly as tall as the building would be');
+    assert.deepEqual(coplanarOverlaps(parts), [], `layering ${tone}`);
+    const xs = parts.filter((p) => !p.diag).flatMap((p) => [p.x - p.w / 2, p.x + p.w / 2]); assert.ok(Math.min(...xs) < shell.rect.x && Math.max(...xs) > shell.rect.x + shell.rect.w, 'standing round the plot');
+    assert.ok(parts.every((p) => p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= 0));
+  }
+  const small = frameParts({ rect: { x: 0, y: 0, w: 10, h: 10 }, h: 8 }), big = frameParts({ rect: { x: 0, y: 0, w: 10, h: 10 }, h: 60 }); assert.ok(big.top > small.top * 4, 'a bigger building, a taller frame');
+});
+
+test('planSpires: a removed file is a column on its building (flagged), a move puts a column on the old home, and a new file has none (it has no place yet)', () => {
+  const layout = buildLayout(sampleFiles()), paths = layout.leaves.map((l) => l.path);
+  const prs = [{ id: '#1', status: 'review_requested', files: [{ path: paths[0], add: 0, del: 50, change: 'removed' }, { path: 'brand/new/file.ts', add: 60, del: 0, change: 'added' }, { path: 'moved/to/here.ts', add: 0, del: 0, change: 'renamed', from: paths[1] }, { path: 'moved/nowhere.ts', add: 0, del: 0, change: 'renamed', from: 'not/on/map.ts' }, { path: paths[2], add: 5, del: 1 }] }];
+  const cols = planSpires({ byPath: layout.byPath, prs });
+  assert.deepEqual(cols.map((c) => [c.path, c.change]).sort((a, b) => (a[0] < b[0] ? -1 : 1)), [[paths[0], 'removed'], [paths[1], 'moved-out'], [paths[2], 'modified']].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+  assert.equal(cols.find((c) => c.path === paths[1]).movedTo, 'moved/to/here.ts');
 });

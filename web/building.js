@@ -141,11 +141,11 @@ export function roofGear(kind, roof, H) {
  */
 export function buildingFor(leaf, style, { gear = true } = {}) {
   const t = traits(leaf.path, style, leaf.hue);
-  if (style.mode !== 'full') return { t, parts: [{ x: leaf.r.x, y: leaf.r.y, w: leaf.r.w, d: leaf.r.h, z: 0, h: leaf.height, dl: 0 }], roof: { ...leaf.r, z: leaf.height }, shell: { rect: leaf.r, h: leaf.height, H: leaf.height, profile: null } };
+  if (style.mode !== 'full') return { t, parts: [{ x: leaf.r.x, y: leaf.r.y, w: leaf.r.w, d: leaf.r.h, z: 0, h: leaf.height, dl: 0 }], roof: { ...leaf.r, z: leaf.height }, shell: { rect: leaf.r, h: leaf.height, H: leaf.height, profile: null, roof: { ...leaf.r, z: leaf.height } } };
   // Each building stands on its lot with a margin of its own (up to 28% a side), so neighbours differ in width and
   // depth and there are gaps between them, like blocks of a city. Height is complexity times one global multiplier.
   const { fx, fy, ox, oy } = t.lot, r = leaf.r, w = Math.max(0.5, r.w * fx), h = Math.max(0.5, r.h * fy);
   const rect = { x: r.x + (r.w - w) * ox, y: r.y + (r.h - h) * oy, w, h }, H = leaf.height * style.height;
   const { parts, roof, shell } = silhouette(t.shape, rect, H, t.shapeV);
-  return { t, parts: gear ? [...parts, ...roofGear(t.gear, roof, H)] : parts, roof, shell: { rect, h: shell, H, profile: parts } };
+  return { t, parts: gear ? [...parts, ...roofGear(t.gear, roof, H)] : parts, roof, shell: { rect, h: shell, H, profile: parts, roof } };
 }

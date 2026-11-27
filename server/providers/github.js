@@ -5,6 +5,9 @@
 // so tests can stand in for gh. Another host (GitLab, say) is another file here with the same `fetch` shape.
 import { execFile } from 'node:child_process';
 
+import { SKIP } from '../localrepo.js';
+import { needsReason } from '../snapshot.js';
+
 export class SyncError extends Error {}
 
 export const FIELDS = ['number', 'title', 'headRefName', 'headRefOid', 'author', 'isDraft', 'reviewDecision', 'statusCheckRollup',
@@ -132,7 +135,7 @@ const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
  * Rejects if the open PRs cannot be fetched, so a cron job never replaces a good feed with a bad one. Trouble with the
  * extras or with finding out who you are only adds a warning.
  */
-export async function fetchGithub({ repo = null, host = null, limit = 500, endedDays = 2, gh = 'gh', exec = defaultExec, now = Date.now() } = {}) {
+export async function fetchGithub({ repo = null, host = null, limit = 500, endedDays = 2, changes = true, gh = 'gh', exec = defaultExec, now = Date.now() } = {}) {
   const env = host ? { GH_HOST: host } : {};
   const warnings = [];
   const list = async (extra) => {
@@ -185,7 +188,114 @@ export async function fetchGithub({ repo = null, host = null, limit = 500, ended
   }
   const seen = new Set(open.map((p) => p.number));
   const prs = [...open, ...ended.filter((p) => !seen.has(p.number))].map((p) => normalisePR(p, { viewer, waitingSince: waiting.get(p.number) ?? null }));
+  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec })); }
   return { prs, viewer, warnings, counts: { open: open.length, ended: prs.length - open.length } };
 }
 
+
+// ---- what happened to each file: added, removed, renamed (and from where) or changed ----
+// `gh pr list --json files` only has paths and counts. GraphQL's changeType says added / deleted / renamed for twenty PRs
+// a request; it cannot say what a renamed file was called, so only the PRs that rename something get one REST call.
+const CHANGE_TYPES = { ADDED: 'added', COPIED: 'added', DELETED: 'removed', RENAMED: 'renamed', MODIFIED: 'modified', CHANGED: 'modified' };
+export const changesQuery = (numbers) => `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
+${numbers.filter(Number.isInteger).map((n) => `  pr${n}: pullRequest(number: ${n}) { files(first: 100) { nodes { path changeType } } }`).join('\n')}
+} }`;
+/** Map of PR number -> Map(path -> 'added' | 'removed' | 'renamed' | 'modified'), and the numbers that rename something. Pure. */
+export function changesFromGraphql(data, numbers) {
+  const out = new Map(), renamers = [];
+  for (const n of numbers) {
+    const nodes = data?.[`pr${n}`]?.files?.nodes; if (!Array.isArray(nodes)) continue;
+    const m = new Map(); for (const f of nodes) if (f?.path) m.set(f.path, CHANGE_TYPES[f.changeType] || 'modified');
+    out.set(n, m); if ([...m.values()].includes('renamed')) renamers.push(n);
+  }
+  return { out, renamers };
+}
+/** REST `pulls/N/files` lines (one JSON array per page) -> Map(new path -> previous path). Pure. */
+export function previousNames(text) {
+  const m = new Map();
+  for (const line of String(text || '').split('\n').filter(Boolean)) { let a; try { a = JSON.parse(line); } catch { continue; } for (const f of Array.isArray(a) ? a : []) if (f?.filename && f.previous_filename) m.set(f.filename, f.previous_filename); }
+  return m;
+}
+/** Add `change` (and `from`) to the files of these PRs. Trouble only costs detail, never the feed: it returns warnings. */
+export async function addFileChanges(prs, { repo, host = null, gh = 'gh', exec = defaultExec, limit = DETAIL_LIMIT } = {}) {
+  const warnings = [], env = host ? { GH_HOST: host } : {}, open = prs.filter((p) => p.files?.length && !['merged', 'closed'].includes(p.status));
+  const looked = open.slice(0, limit); if (open.length > looked.length) warnings.push(`file changes (added, removed, moved) were read for ${looked.length} of ${open.length} PRs; the rest show every file as changed`);
+  if (!looked.length) return warnings;
+  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { return [...warnings, `could not read file changes: ${e.message.split('\n')[0]}`]; }
+  let failed = 0;
+  for (let i = 0; i < looked.length; i += CHUNK) {
+    const chunk = looked.slice(i, i + CHUNK), numbers = chunk.map((p) => p.number);
+    try {
+      const out = JSON.parse(await exec(gh, ['api', 'graphql', '-f', `query=${changesQuery(numbers)}`, '-F', `owner=${owner}`, '-F', `name=${name}`], { env }));
+      const { out: byPr, renamers } = changesFromGraphql(out?.data?.repository, numbers);
+      for (const p of chunk) { const m = byPr.get(p.number); if (m) for (const f of p.files) { const c = m.get(f.path); if (c) f.change = c; } }
+      for (const n of renamers) {
+        const p = chunk.find((x) => x.number === n);
+        try { const prev = previousNames(await exec(gh, ['api', `repos/${owner}/${name}/pulls/${n}/files`, '--paginate', '--jq', '[.[] | {filename, previous_filename}]'], { env })); for (const f of p.files) if (f.change === 'renamed' && prev.get(f.path)) f.from = prev.get(f.path); }
+        catch { failed++; }
+      }
+    } catch { failed += chunk.length; }
+  }
+  if (failed) warnings.push(`could not read file changes for ${failed} PR${failed > 1 ? 's' : ''}; their new, removed and moved files show as plain changes`);
+  return warnings;
+}
+
 export const github = { name: 'github', fetch: fetchGithub };
+
+// ---- a repo with no clone: its shape and its numbers, straight from the remote ----------------------------------------
+
+/** "owner/name", "host/owner/name" or a URL (https, ssh or scp style) into {host, owner, name}. null if it is none of those. */
+export function parseRepoRef(input) {
+  let s = String(input || '').trim().replace(/\/+$/, '').replace(/\.git$/, '');
+  if (!s) return null;
+  let m = s.match(/^(?:https?|ssh|git):\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/([^/]+)\/([^/]+)/) || s.match(/^[^@/\s]+@([^:/\s]+):([^/]+)\/([^/]+)$/);
+  if (m) return { host: m[1], owner: m[2], name: m[3].replace(/\.git$/, '') };
+  const parts = s.split('/').filter(Boolean);
+  if (parts.length === 2 && !parts[0].includes('.')) return { host: null, owner: parts[0], name: parts[1] };
+  if (parts.length === 3 && parts[0].includes('.')) return { host: parts[0], owner: parts[1], name: parts[2] };
+  return null;
+}
+const isSafeName = (x) => /^[A-Za-z0-9_.-]+$/.test(x) && x !== '.' && x !== '..';
+export const repoKey = (r) => `${r.host && r.host !== 'github.com' ? r.host + '/' : ''}${r.owner}/${r.name}`;
+
+// A file's size in bytes is all the tree API gives. About 38 bytes make a line of code, and a branchy line is roughly
+// one in nine, so these are estimates, and the city says so. Real counts need the content, which would mean a clone.
+const BYTES_PER_LINE = 38, LINES_PER_BRANCH = 9;
+export const estimateFile = (size) => { const loc = Math.max(1, Math.round(size / BYTES_PER_LINE)); return { loc, complexity: Math.round(loc / LINES_PER_BRANCH) }; };
+
+/**
+ * The file list of a repo's default branch without cloning it: two `gh api` calls (the default branch, then its whole
+ * tree). Sizes are estimates (see above). A tree GitHub had to cut short is reported as a warning, not an error.
+ */
+export async function fetchRepoTree({ repo, host = null, gh = 'gh', exec = defaultExec, maxFiles = 6000, maxBytes = 1_000_000 } = {}) {
+  const ref = typeof repo === 'string' ? parseRepoRef(repo) : repo;
+  if (!ref || !isSafeName(ref.owner) || !isSafeName(ref.name)) throw new SyncError(`cannot read owner and name from "${repo}"`);
+  const h = host || ref.host, env = h && h !== 'github.com' ? { GH_HOST: h } : {}, base = `repos/${ref.owner}/${ref.name}`;
+  const info = JSON.parse(await exec(gh, ['api', base, '--jq', '{default_branch, private, description}'], { env }) || '{}');
+  const branch = info.default_branch || 'HEAD';
+  const out = JSON.parse(await exec(gh, ['api', `${base}/git/trees/${encodeURIComponent(branch)}?recursive=1`], { env }) || '{}');
+  if (!Array.isArray(out.tree)) throw new SyncError('gh returned no file tree');
+  const warnings = [];
+  if (out.truncated) warnings.push('GitHub cut this repository\'s file tree short (it is very large), so the city shows only part of it');
+  let blobs = out.tree.filter((t) => t.type === 'blob' && !SKIP.test(t.path) && t.size > 0 && t.size <= maxBytes);
+  if (blobs.length > maxFiles) { warnings.push(`${blobs.length} files: showing the ${maxFiles} biggest`); blobs = blobs.sort((a, b) => b.size - a.size).slice(0, maxFiles); }
+  const files = blobs.map((t) => ({ path: t.path, ...estimateFile(t.size) })).sort((a, b) => (a.path < b.path ? -1 : 1));
+  return { files, branch, warnings, estimated: true, description: info.description || '', private: !!info.private };
+}
+
+/**
+ * Three numbers for the world view, from one cheap `gh pr list` (no files, no timelines): how many PRs are open, how many are
+ * yours, and how many need you. Same rules as the map: "needs you" is `needsReason`.
+ */
+export async function fetchPRStats({ repo, host = null, gh = 'gh', exec = defaultExec, limit = 300 } = {}) {
+  const ref = typeof repo === 'string' ? parseRepoRef(repo) : repo;
+  if (!ref || !isSafeName(ref.owner) || !isSafeName(ref.name)) throw new SyncError(`cannot read owner and name from "${repo}"`);
+  const h = host || ref.host, env = h && h !== 'github.com' ? { GH_HOST: h } : {};
+  let viewer = null;
+  try { viewer = (await exec(gh, ['api', 'user', '--jq', '.login'], { env })).trim() || null; } catch { /* mine stays 0 */ }
+  const fields = FIELDS.filter((f) => f !== 'files');                      // the files are what makes a PR list slow, and the counts do not need them
+  const raw = JSON.parse(await exec(gh, ['pr', 'list', '--repo', `${ref.owner}/${ref.name}`, '--state', 'open', '--limit', String(limit), '--json', fields.join(',')], { env }) || '[]');
+  if (!Array.isArray(raw)) throw new SyncError('gh returned an unexpected shape');
+  const prs = raw.map((p) => normalisePR({ ...p, files: [] }, { viewer }));
+  return { open: prs.length, mine: prs.filter((p) => p.mine).length, needs: prs.filter((p) => needsReason(p)).length, viewer, capped: raw.length >= limit };
+}
