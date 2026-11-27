@@ -38,7 +38,7 @@ try {
   await step('adding the second fake repo to a free hex; a made-up repo is refused with a hint', async () => {
     let w = await world(), p = await screen(w.slots[0]); await page.mouse.move(p.sx, p.sy);
     await waitFor(() => !document.getElementById('wplus').hidden, null, 'plus'); await page.click('#wplus'); await page.fill('#wadd-url', 'acme/nope'); await page.click('#wadd-go');
-    await page.waitForFunction(() => /try acme\/platform or acme\/billing-api or acme\/mobile-app/.test(document.getElementById('wadd-msg').textContent), null, { timeout: 8000 });
+    await page.waitForFunction(() => /try acme\/platform or acme\/billing-api or acme\/mobile-app or acme\/storefront/.test(document.getElementById('wadd-msg').textContent), null, { timeout: 8000 });
     await page.click('#wadd-cancel');
     await addAt(w.slots[0], 'https://github.com/acme/billing-api');
     await waitFor(() => window.battlemap.world.info().cities === 2, null, 'billing-api appears');

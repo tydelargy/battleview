@@ -1,4 +1,4 @@
-// A pretend GitHub for trying Battle Map with nothing to connect to (battlemap --demo, npm run mock): three fake repos with
+// A pretend GitHub for trying Battle Map with nothing to connect to (battlemap --demo, npm run mock): four fake repos with
 // files and PRs, handed to the hub through the same three calls a real GitHub gets. "you" is the viewer.
 import { sampleFiles, samplePRs } from './sample.js';
 import { hash, rng } from './hunks.js';
@@ -30,7 +30,7 @@ const MOBILE = tree({
 // change: 'added' (not on the map yet), 'removed' (a building that comes down) or 'renamed' (moved from `from`); nothing means just changed
 const f = (path, add, del, change, from) => ({ path, add, del, ...(change ? { change } : {}), ...(from ? { from } : {}) });
 const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
-const pr = (n, title, author, status, files, hAgo, branch) => ({ id: `#${n}`, number: n, title, branch: branch || `${author}/${title.split(' ')[0].toLowerCase()}`, author, status, files, createdAt: ago(hAgo + 30), updatedAt: ago(hAgo), url: `https://github.com/acme/demo/pull/${n}` });
+const pr = (n, title, author, status, files, hAgo, branch, extra) => ({ id: `#${n}`, number: n, title, branch: branch || `${author}/${title.split(' ')[0].toLowerCase()}`, author, status, files, createdAt: ago(hAgo + 30), updatedAt: ago(hAgo), url: `https://github.com/acme/demo/pull/${n}`, ...extra });
 const BILLING_PRS = () => [
   pr(118, 'ENG-481 Round tax per line, not per invoice', 'maya', 'review_requested', [f('src/tax/round.ts', 62, 18), f('src/invoices/total.ts', 20, 9), f('test/round.test.ts', 80, 0, 'added')], 5),
   pr(121, 'ENG-433 CSV export for invoices', 'you', 'ci_failing', [f('src/invoices/export.ts', 140, 0, 'added'), f('src/invoices/list.ts', 12, 3)], 3),
@@ -47,10 +47,40 @@ const MOBILE_PRS = () => [
   pr(45, 'Silent token refresh', 'agent', 'review_requested', [f('src/api/auth.ts', 70, 25), f('src/api/client.ts', 31, 9)], 15),
   pr(47, 'ENG-460 Tab bar badges; replace Toast with the shared one', 'devon', 're_review', [f('src/navigation/Tabs.tsx', 40, 11), f('src/components/Toast.tsx', 0, 80, 'removed'), f('src/screens/Settings.tsx', 6, 2)], 26),
 ];
+
+// acme/storefront: PRs whose BASE is not the default branch's head. Since these PRs branched, `main` moved src/cart/ to
+// src/checkout/cart/, moved src/utils/format.ts to src/lib/format.ts, deleted src/legacy/oldCheckout.ts and added src/lib/money.ts.
+// GitHub lists a PR's files against its own merge base, so a stale PR names paths the way they were when it branched: those paths are
+// not on the map. `base` (the branch it targets), `behind` (commits it is behind that branch) and `mergeState` are what GitHub knows and
+// the feed does not carry yet; they are here so the cases say what is true. test/stale-base.test.js records what the map does with each.
+const STORE = tree({
+  'src/checkout/cart': { 'Cart.tsx': 300, 'CartItem.tsx': 120, 'totals.ts': 140, 'promo.ts': 180 },
+  'src/checkout': { 'Checkout.tsx': 380, 'Payment.tsx': 260 },
+  'src/lib': { 'format.ts': 90, 'money.ts': 110, 'http.ts': 150 },
+  'src/catalog': { 'Catalog.tsx': 340, 'Product.tsx': 280, 'search.ts': 200 },
+  'src/account': { 'Login.tsx': 180, 'Profile.tsx': 220 },
+  config: { 'build.ts': 70 },
+  test: { 'cart.test.ts': 220 },
+});
+const stale = (base, behind, mergeState) => ({ base, behind, mergeState });
+const STORE_PRS = () => [
+  pr(300, 'Control: edit a product page (up to date)', 'you', 'review_requested', [f('src/catalog/Product.tsx', 44, 12)], 3, undefined, stale('main', 0, 'CLEAN')),
+  pr(301, 'Promo codes: edit the cart (cart moved on main)', 'you', 'review_requested', [f('src/cart/Cart.tsx', 60, 14), f('src/cart/totals.ts', 22, 6)], 6, undefined, stale('main', 41, 'DIRTY')),
+  pr(302, 'Cart rewrite, 5 files in the folder main renamed', 'devon', 'review_requested', [f('src/cart/Cart.tsx', 120, 80), f('src/cart/CartItem.tsx', 40, 10), f('src/cart/totals.ts', 30, 12), f('src/cart/promo.ts', 55, 3), f('src/cart/Coupons.tsx', 90, 0, 'added')], 30, undefined, stale('main', 41, 'DIRTY')),
+  pr(303, 'Tidy checkout (touches a file main deleted)', 'maya', 'changes_requested', [f('src/legacy/oldCheckout.ts', 18, 7), f('src/checkout/Checkout.tsx', 36, 20)], 18, undefined, stale('main', 25, 'DIRTY')),
+  pr(304, 'Remove the old formatter (main moved it)', 'ines', 'review_requested', [f('src/utils/format.ts', 0, 90, 'removed'), f('src/lib/http.ts', 8, 2)], 40, undefined, stale('main', 12, 'DIRTY')),
+  pr(305, 'Move promo.ts into its own folder (main moved it first)', 'kofi', 'review_requested', [f('src/checkout/promo/promo.ts', 6, 2, 'renamed', 'src/cart/promo.ts')], 22, undefined, stale('main', 41, 'DIRTY')),
+  pr(306, 'Move format.ts to lib/ (main already did)', 'agent', 'review_requested', [f('src/lib/format.ts', 4, 1, 'renamed', 'src/utils/format.ts')], 9, undefined, stale('main', 12, 'DIRTY')),
+  pr(307, 'Add money.ts (main added it too)', 'devon', 'ci_failing', [f('src/lib/money.ts', 120, 0, 'added'), f('src/checkout/Payment.tsx', 14, 3)], 14, undefined, stale('main', 8, 'DIRTY')),
+  pr(308, 'Backport search fix to the 2.x release', 'maya', 'review_requested', [f('src/catalog/search.ts', 30, 8), f('src/catalog/v2/search.ts', 110, 0, 'added'), f('src/catalog/v2/index.ts', 12, 0, 'added')], 50, undefined, stale('release/2.x', 260, 'CLEAN')),
+  pr(309, 'New search filters', 'you', 'review_requested', [f('src/catalog/filters.ts', 140, 0, 'added'), f('src/catalog/search.ts', 26, 5)], 8, 'you/filters', stale('main', 0, 'CLEAN')),
+  pr(310, 'Filter chips (stacked on #309)', 'you', 'draft', [f('src/catalog/filters.ts', 34, 6), f('src/catalog/Catalog.tsx', 28, 4)], 4, undefined, stale('you/filters', 0, 'CLEAN')),
+];
 const REPOS = {
   'acme/platform': { files: sampleFiles, prs: samplePRs, description: 'The monolith (the built-in sample)', estimated: false },
   'acme/billing-api': { files: () => BILLING, prs: BILLING_PRS, description: 'Invoices, payments and the ledger', estimated: true },
   'acme/mobile-app': { files: () => MOBILE, prs: MOBILE_PRS, description: 'The customer app', estimated: true },
+  'acme/storefront': { files: () => STORE, prs: STORE_PRS, description: 'The shop front end: PRs on old or different bases', estimated: true },
 };
 
 export function demoProvider() {
