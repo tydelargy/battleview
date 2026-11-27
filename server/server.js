@@ -7,6 +7,7 @@ import { createJiraClient, syncJira, JiraError } from './jira/client.js';
 import { buildSnapshot, normalisePRs, extractKey } from './snapshot.js';
 import { WatchStore, classify, reconcileEnded, matchPath, watchedFiles } from './watch.js';
 import { NotifyStore, eventsFor, resolveFor } from './notify.js';
+import { isTreeish } from './providers/github.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -160,6 +161,13 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
       if (origin && new URL(origin).host !== req.headers.host) return json(res, 403, { error: 'cross-origin request refused' });
     }
     if (p === '/api/snapshot' && m === 'GET') return json(res, 200, snapshot());
+    if (p === '/api/base-tree' && m === 'GET') {                              // the files as they stood on another branch or at a commit: the base a PR was written against
+      const at = url.searchParams.get('at') || '';
+      if (!app.treeAt) return json(res, 404, { error: 'this map has no other branches to look at' });
+      if (!isTreeish(at)) return json(res, 400, { error: 'at must be a branch name or a commit' });
+      try { const t = await app.treeAt(at); return json(res, 200, { at, files: t.files, warnings: t.warnings || [], estimated: t.estimated ?? true }); }
+      catch (e) { return json(res, 502, { error: String(e.message || e).split('\n')[0] }); }
+    }
     if (p === '/api/events' && m === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
       res.write(`event: snapshot\ndata: ${app.version}\n\n`);

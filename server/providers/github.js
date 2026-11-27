@@ -294,8 +294,9 @@ export async function addSince(prs, { repo, host = null, gh = 'gh', exec = defau
   let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { return [...warnings, `could not read what targets changed: ${e.message.split('\n')[0]}`]; }
   let failed = 0, next = 0;
   const one = async (p) => {
-    const text = await exec(gh, ['api', `repos/${owner}/${name}/compare/${p.headSha}...${encodeURIComponent(p.base.ref)}`, '--jq', '{files: [.files[]? | {filename, status, previous_filename}]}'], { env });
-    const files = JSON.parse(text)?.files; if (!Array.isArray(files)) throw new SyncError('no files in the answer');
+    const text = await exec(gh, ['api', `repos/${owner}/${name}/compare/${p.headSha}...${encodeURIComponent(p.base.ref)}`, '--jq', '{mergeBase: .merge_base_commit.sha, files: [.files[]? | {filename, status, previous_filename}]}'], { env });
+    const out = JSON.parse(text), files = out?.files; if (!Array.isArray(files)) throw new SyncError('no files in the answer');
+    if (SHA.test(out.mergeBase || '')) p.base.mergeBase = out.mergeBase;                // where the PR and its target last agreed: the tree to look at to see the PR as its author did
     const since = sinceFromCompare(files, p.files.map((f) => f.from || f.path));
     for (const f of p.files) { const s = since.get(f.from || f.path); if (s) f.since = s; }
     if (files.length >= SINCE_FILES) p.base.sinceCut = true;
@@ -328,16 +329,20 @@ export const repoKey = (r) => `${r.host && r.host !== 'github.com' ? r.host + '/
 const BYTES_PER_LINE = 38, LINES_PER_BRANCH = 9;
 export const estimateFile = (size) => { const loc = Math.max(1, Math.round(size / BYTES_PER_LINE)); return { loc, complexity: Math.round(loc / LINES_PER_BRANCH) }; };
 
+/** A branch name or a commit sha, safe to put in a URL path (encoded) and never an option for gh: no control characters, no `..`, not empty or huge. */
+export const isTreeish = (s) => typeof s === 'string' && s.length > 0 && s.length <= 250 && !/[\0-\x1f\x7f\s~^:?*[\\]/.test(s) && !s.includes('..') && !s.startsWith('-') && !s.endsWith('/') && !s.endsWith('.lock');
+
 /**
- * The file list of a repo's default branch without cloning it: two `gh api` calls (the default branch, then its whole
+ * The file list of a repo's default branch (or, with `at`, another branch or a commit) without cloning it: two `gh api` calls (the default branch, then its whole
  * tree). Sizes are estimates (see above). A tree GitHub had to cut short is reported as a warning, not an error.
  */
-export async function fetchRepoTree({ repo, host = null, gh = 'gh', exec = defaultExec, maxFiles = 6000, maxBytes = 1_000_000 } = {}) {
+export async function fetchRepoTree({ repo, host = null, at = null, gh = 'gh', exec = defaultExec, maxFiles = 6000, maxBytes = 1_000_000 } = {}) {
   const ref = typeof repo === 'string' ? parseRepoRef(repo) : repo;
   if (!ref || !isSafeName(ref.owner) || !isSafeName(ref.name)) throw new SyncError(`cannot read owner and name from "${repo}"`);
   const h = host || ref.host, env = h && h !== 'github.com' ? { GH_HOST: h } : {}, base = `repos/${ref.owner}/${ref.name}`;
-  const info = JSON.parse(await exec(gh, ['api', base, '--jq', '{default_branch, private, description}'], { env }) || '{}');
-  const branch = info.default_branch || 'HEAD';
+  if (at != null && !isTreeish(at)) throw new SyncError('that is not a branch name or a commit');
+  const info = at ? {} : JSON.parse(await exec(gh, ['api', base, '--jq', '{default_branch, private, description}'], { env }) || '{}');   // `at`: the tree as it stood on another branch or at a commit; nothing else about the repo is needed
+  const branch = at || info.default_branch || 'HEAD';
   const out = JSON.parse(await exec(gh, ['api', `${base}/git/trees/${encodeURIComponent(branch)}?recursive=1`], { env }) || '{}');
   if (!Array.isArray(out.tree)) throw new SyncError('gh returned no file tree');
   const warnings = [];

@@ -62,9 +62,18 @@ const STORE = tree({
   config: { 'build.ts': 70 },
   test: { 'cart.test.ts': 220 },
 });
+// The storefront as it stood where its PRs branched: before main moved src/cart/ and src/utils/format.ts, deleted src/legacy/oldCheckout.ts and added
+// src/lib/money.ts. A PR's own paths are right in this tree. `at` below asks for it by the commit a PR says it branched from.
+const BRANCHED = 'a1'.repeat(20), RELEASE = 'b2'.repeat(20);
+const STORE_OLD = () => tree({
+  'src/cart': { 'Cart.tsx': 300, 'CartItem.tsx': 120, 'totals.ts': 140, 'promo.ts': 180 }, 'src/checkout': { 'Checkout.tsx': 380, 'Payment.tsx': 260 },
+  'src/utils': { 'format.ts': 90 }, 'src/lib': { 'http.ts': 150 }, 'src/legacy': { 'oldCheckout.ts': 210 },
+  'src/catalog': { 'Catalog.tsx': 340, 'Product.tsx': 280, 'search.ts': 200 }, 'src/account': { 'Login.tsx': 180, 'Profile.tsx': 220 }, config: { 'build.ts': 70 }, test: { 'cart.test.ts': 220 },
+});
+const STORE_AT = { [BRANCHED]: STORE_OLD, [RELEASE]: () => [...STORE_OLD(), ...tree({ 'src/catalog/v2': { 'search.ts': 160, 'index.ts': 40 } })], 'you/filters': () => [...STORE, ...tree({ 'src/catalog': { 'filters.ts': 140 } })] };
 const mv = (to) => ({ change: 'moved', to }), gone = { change: 'removed' }, edited = { change: 'modified' }, both = { change: 'added' };
 const sf = (file, since) => ({ ...file, since });   // a PR file, plus what the target did to it since the PR branched
-const stale = (ref, behind, mergeState) => ({ base: { ref, mergeable: mergeState === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE', mergeState, behind } });   // what GitHub says
+const stale = (ref, behind, mergeState) => ({ base: { ref, mergeable: mergeState === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE', mergeState, behind, ...(behind > 0 ? { mergeBase: ref === 'main' ? BRANCHED : RELEASE } : {}) } });   // what GitHub says
 const STORE_PRS = () => [
   pr(300, 'Control: edit a product page (up to date)', 'you', 'review_requested', [f('src/catalog/Product.tsx', 44, 12)], 3, undefined, stale('main', 0, 'CLEAN')),
   pr(301, 'Promo codes: edit the cart (cart moved on main)', 'you', 'review_requested', [sf(f('src/cart/Cart.tsx', 60, 14), mv('src/checkout/cart/Cart.tsx')), sf(f('src/cart/totals.ts', 22, 6), mv('src/checkout/cart/totals.ts'))], 6, undefined, stale('main', 41, 'DIRTY')),
@@ -89,7 +98,9 @@ export function demoProvider() {
   const find = (ref) => REPOS[`${ref.owner}/${ref.name}`.toLowerCase()] || (() => { throw new SyncError(`HTTP 404: Not Found. This is the demo: try ${Object.keys(REPOS).join(' or ')}`); })();
   return {
     names: Object.keys(REPOS),
-    async tree(ref) { const r = find(ref); return { files: r.files(), branch: 'main', warnings: [], estimated: r.estimated, description: r.description, private: false }; },
+    async tree(ref, { at } = {}) {
+      const r = find(ref); if (at) { const f = ref.name === 'storefront' && STORE_AT[at]; if (!f) throw new SyncError(`HTTP 404: the demo has no tree at "${at}"`); return { files: f(), branch: at, warnings: [], estimated: true, description: '', private: false }; }
+      return { files: r.files(), branch: 'main', warnings: [], estimated: r.estimated, description: r.description, private: false }; },
     async stats(ref) {
       const prs = find(ref).prs().map((p) => ({ ...p, mine: p.author === 'you' }));
       return { open: prs.length, mine: prs.filter((p) => p.mine).length, needs: prs.filter((p) => needsReason(p)).length, viewer: 'you', capped: false };
