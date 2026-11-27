@@ -152,17 +152,23 @@ test('layering: belts, rails, scaffolding, crates, floors and cranes never put t
 
 // ---- files that go, move and come: condemned buildings, amber move tape, construction sites ----
 import { condemnedParts, frameParts } from '../web/sites.js';
-test('a condemned building: tape X on every wall, hazard bands, rubble beside it; nothing in a shared plane, nothing floating', () => {
-  for (const shell of [{ rect: { x: 10, y: 10, w: 30, h: 18 }, h: 14, id: 'a/b.ts' }, { rect: { x: 0, y: 0, w: 4, h: 3 }, h: 3 }, { rect: { x: 5, y: 5, w: 90, h: 60 }, h: 40, id: 'big' }]) {
-    const { parts, top } = condemnedParts(shell), diag = parts.filter((p) => p.diag);
-    assert.equal(diag.length, 8, 'two diagonals on each of four walls'); assert.equal(top, shell.h);
-    assert.equal(parts.filter((p) => p.tone === 'tape' && !p.diag).length, 8, 'a band round the base and round the top, four boxes each');
-    assert.ok(parts.filter((p) => p.tone === 'rubble' || p.tone === 'rubble2').length >= 6, 'a heap of rubble');
-    assert.deepEqual(coplanarOverlaps(parts), [], 'layering');
-    for (const p of parts.filter((q) => q.tone === 'rubble' || q.tone === 'rubble2')) assert.ok(p.y - p.d / 2 > shell.rect.y + shell.rect.h + 0.5, 'rubble sits beyond the base band');
-    assert.ok(parts.every((p) => p.diag ? p.len > 0 : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= 0), 'sound boxes');
-    assert.ok(Math.max(...parts.filter((p) => !p.diag).map((p) => p.z + p.h)) <= shell.h + 1e-9, 'never taller than the building');
+test('a condemned building: a see-through red shell in its own shape, an X on the roof and on every wall, rubble beside it; no rings; layered', () => {
+  const tiersOf = (shape) => silhouette(shape, { x: 10, y: 10, w: 30, h: 18 }, 24, 0.4);
+  for (const shape of [0, 1, 2, 3, 4, 5, 6]) {
+    const sil = tiersOf(shape), shell = { rect: { x: 10, y: 10, w: 30, h: 18 }, h: sil.shell, H: 24, profile: sil.parts, roof: sil.roof, id: `f${shape}.ts` };
+    const { parts, top } = condemnedParts(shell), shells = parts.filter((p) => p.tone === 'hazard'), diag = parts.filter((p) => p.diag), flat = diag.filter((p) => p.flat), wall = diag.filter((p) => !p.flat);
+    assert.equal(shells.length, sil.parts.length, `one red shell per tier (shape ${shape})`); assert.equal(top, shell.h);
+    assert.ok(shells.every((p, i) => p.w > sil.parts[i].w && p.d > sil.parts[i].d && Math.abs(p.z + p.h - (sil.parts[i].z + sil.parts[i].h)) < 1e-9 && Math.abs(p.z - sil.parts[i].z) < 0.1 * 7), 'each stands just outside its tier, to the same top');
+    assert.equal(flat.length, 2, 'a two-strip X across the roof'); assert.ok(flat.every((p) => p.z > sil.roof.z && p.tone === 'tape' && p.len > 0.8 * Math.min(sil.roof.w, sil.roof.h)), 'on top of the roof, red, as long as the roof');
+    assert.deepEqual(flat.map((p) => Math.sign(p.angle)).sort(), [-1, 1], 'crossing'); assert.equal(wall.length, 8, 'two diagonals on each of four walls');
+    assert.ok(!parts.some((p) => p.tone === 'tape' && !p.diag), 'no rings or bands: they would look like the red belts of a file\'s deleted lines');
+    assert.ok(parts.filter((p) => p.tone === 'rubble' || p.tone === 'rubble2').length === 9, 'rubble');
+    assert.deepEqual(coplanarOverlaps(parts), [], `layering (shape ${shape})`);
+    for (const p of parts.filter((q) => q.tone === 'rubble' || q.tone === 'rubble2')) assert.ok(p.y - p.d / 2 > shell.rect.y + shell.rect.h + 0.5, 'rubble sits clear of the building');
+    assert.ok(parts.every((p) => p.diag ? p.len > 0 && Number.isFinite(p.x + p.y + p.z) : p.w > 0 && p.d > 0 && p.h > 0 && p.z >= 0), 'sound boxes');
+    assert.ok(Math.max(...parts.filter((p) => p.tone.startsWith('rubble')).map((p) => p.z + p.h)) <= shell.h / 3 * 2 + 1e-9, 'rubble never tall');
   }
+  const plain = condemnedParts({ rect: { x: 0, y: 0, w: 4, h: 3 }, h: 3 }); assert.equal(plain.parts.filter((p) => p.tone === 'hazard').length, 1, 'a building with no tier information is one box');
   assert.deepEqual(condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'same' }), condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'same' }), 'the rubble is the same every time');
   assert.notDeepEqual(condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'one' }).parts.filter((p) => p.tone.startsWith('rubble')), condemnedParts({ rect: { x: 1, y: 1, w: 9, h: 9 }, h: 8, id: 'two' }).parts.filter((p) => p.tone.startsWith('rubble')), 'and different for another file');
 });

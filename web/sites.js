@@ -92,36 +92,38 @@ export function scaffoldParts(rect, top, { pad = 0.5, lift = 3.2, maxPoles = 28,
 }
 
 /**
- * A building that is about to go: red tape in an X across every wall, a hazard band round the base and another round the
- * top, and rubble heaped beside it. `tone` 'move' draws the same frame in amber with no rubble, for the old home of a file
- * that is moving out. Everything stands clear of the walls and of itself (CLAUDE.md, Layering): the tape bands are proud of the
- * wall by different amounts, and the rubble starts beyond the base band.
+ * A building that is about to go. It must read as "marked for demolition" from far away, and look nothing like the red belts of a
+ * file's deleted lines, so there are no rings. Instead:
+ *   a translucent red shell that follows the building's own silhouette (every tier, so a stepped tower is a stepped red ghost),
+ *   a big red X of tape lying across the roof, where the iso camera looks, and red tape in an X on every wall,
+ *   and rubble heaped beside it.
+ * Each tier's shell stands out from the wall by its own amount, so no two faces share a plane (CLAUDE.md, Layering); the rubble is a grid of
+ * pieces that never overlap, none above a third of the building.
  */
-export function condemnedParts(shell, { tone = 'tape', rubble = true } = {}) {
-  const { rect } = shell, H = shell.h, parts = [], moving = tone === 'move';
-  const t = clamp(Math.max(rect.w, rect.h) * 0.03, 0.6, 1.8), band = clamp(H * 0.09, 0.9, 2.2), o1 = 0.4, o2 = 0.7;
-  const ring = (z, h, out, th) => { const x0 = rect.x - out, y0 = rect.y - out, W = rect.w + 2 * out, D = rect.h + 2 * out;
-    parts.push({ x: x0 + W / 2, y: y0, w: W, d: th, z, h, tone, ground: true }, { x: x0 + W / 2, y: y0 + D, w: W, d: th, z, h, tone, ground: true },
-      { x: x0, y: y0 + D / 2, w: th, d: Math.max(0.1, D - th), z, h, tone, ground: true }, { x: x0 + W, y: y0 + D / 2, w: th, d: Math.max(0.1, D - th), z, h, tone, ground: true }); };
-  ring(0, band, o1, 0.7); ring(Math.max(band * 2, H - band), band, o2, 0.7);                    // hazard bands: round the base, round the top
-  const inner = Math.max(0.5, H - band * 3), z0 = band * 1.5;                                  // the X runs between them
+export function condemnedParts(shell) {
+  const { rect } = shell, H = shell.h, parts = [], tone = 'tape';
+  // the shell: one slightly larger box per tier, drawn see-through
+  const tiers = shell.profile && shell.profile.length ? shell.profile : [{ x: rect.x, y: rect.y, w: rect.w, d: rect.h, z: 0, h: H }];
+  tiers.forEach((p, i) => { const o = 0.25 + 0.14 * i; parts.push({ x: p.x + p.w / 2, y: p.y + p.d / 2, w: p.w + 2 * o, d: p.d + 2 * o, z: p.z + 0.1 * i, h: Math.max(0.1, p.h - 0.1 * i), tone: 'hazard', ground: true }); });   // each tier a hair higher off the ground than the one before: tiers of one building overlap once enlarged, and their floors must not share a plane
+  const t = clamp(Math.max(rect.w, rect.h) * 0.03, 0.6, 1.8), o1 = 0.4;
+  // the X on the walls of the part of the building that has all four walls
+  const inner = Math.max(0.5, H - 1.2), z0 = 0.6, px = rect.x - o1 - 0.45 * tiers.length * 0.3, fw = rect.w + 2 * (o1 + 0.45 * tiers.length * 0.3), fd = rect.h + 2 * (o1 + 0.45 * tiers.length * 0.3), py = rect.y - o1 - 0.45 * tiers.length * 0.3;
   const wall = (cx, cy, len, along) => { for (const sign of [1, -1]) parts.push({ diag: true, x: cx, y: cy, z: z0 + inner / 2, len: Math.hypot(len, inner), t, along, angle: sign * Math.atan2(inner, len), tone, ground: true }); };
-  const px = rect.x - o1 + 0.01, py = rect.y - o1 + 0.01, fw = rect.w + 2 * o1, fd = rect.h + 2 * o1;
   wall(px + fw / 2, py, fw, 'x'); wall(px + fw / 2, py + fd, fw, 'x'); wall(px, py + fd / 2, fd, 'y'); wall(px + fw, py + fd / 2, fd, 'y');
-  if (rubble && !moving) {                                                                      // a heap of broken pieces on the front side, beyond the band
-    // pieces never overlap each other (layering): six sit in a 3 x 2 grid of cells, three more are stacked on the first three
-    let h = 0; for (const ch of shell.id || 'x') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-    const rnd = () => ((h = (Math.imul(h, 1103515245) + 12345) >>> 0) % 1000) / 1000;
-    const spread = Math.max(rect.w * 0.9, 8), cw = spread / 3, cd = 3.2, x0 = rect.x + rect.w / 2 - spread / 2, y0 = rect.y + rect.h + 2.2;
-    const lower = [];
-    for (let i = 0; i < 6; i++) {
-      const col = i % 3, row = Math.floor(i / 3), size = Math.min(Math.min(cw, cd) * (0.55 + rnd() * 0.3), H * 0.32), hh = size * (0.7 + rnd() * 0.5);   // never more than a third of the building's height
-      const jx = (rnd() - 0.5) * (cw - size) * 0.8, jy = (rnd() - 0.5) * (cd - size) * 0.8;
-      const piece = { x: x0 + cw * (col + 0.5) + jx, y: y0 + cd * (row + 0.5) + jy, w: size, d: size, z: 0, h: hh, tone: rnd() > 0.5 ? 'rubble' : 'rubble2', ground: true };
-      parts.push(piece); lower.push(piece);
-    }
-    for (let i = 0; i < 3; i++) { const b0 = lower[i], size = Math.max(0.25, b0.w - 0.4); parts.push({ x: b0.x, y: b0.y, w: size, d: size, z: b0.h, h: size * 0.8, tone: rnd() > 0.5 ? 'rubble' : 'rubble2', ground: true }); }
+  // the X across the roof: two flat strips on the highest roof, crossing at its middle
+  const roof = shell.roof || { ...rect, z: H }, rt = clamp(Math.min(roof.w, roof.h) * 0.09, 0.7, 2.6), rlen = Math.hypot(roof.w, roof.h) * 0.96, ra = Math.atan2(roof.h, roof.w);
+  for (const sign of [1, -1]) parts.push({ diag: true, flat: true, x: roof.x + roof.w / 2, y: roof.y + roof.h / 2, z: roof.z + 0.25 + (sign > 0 ? 0 : 0.0), len: rlen, t: rt, th: 0.2, angle: sign * ra, tone, ground: true });
+  // rubble beside it
+  let h = 0; for (const ch of shell.id || 'x') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const rnd = () => ((h = (Math.imul(h, 1103515245) + 12345) >>> 0) % 1000) / 1000;
+  const spread = Math.max(rect.w * 0.9, 8), cw = spread / 3, cd = 3.2, x0 = rect.x + rect.w / 2 - spread / 2, y0 = rect.y + rect.h + 2.6, lower = [];
+  for (let i = 0; i < 6; i++) {
+    const col = i % 3, row = Math.floor(i / 3), size = Math.min(Math.min(cw, cd) * (0.55 + rnd() * 0.3), H * 0.32), hh = size * (0.7 + rnd() * 0.5);
+    const jx = (rnd() - 0.5) * (cw - size) * 0.8, jy = (rnd() - 0.5) * (cd - size) * 0.8;
+    const piece = { x: x0 + cw * (col + 0.5) + jx, y: y0 + cd * (row + 0.5) + jy, w: size, d: size, z: 0, h: hh, tone: rnd() > 0.5 ? 'rubble' : 'rubble2', ground: true };
+    parts.push(piece); lower.push(piece);
   }
+  for (let i = 0; i < 3; i++) { const b0 = lower[i], size = Math.max(0.25, b0.w - 0.4); parts.push({ x: b0.x, y: b0.y, w: size, d: size, z: b0.h, h: size * 0.8, tone: rnd() > 0.5 ? 'rubble' : 'rubble2', ground: true }); }
   return { parts, top: H };
 }
 

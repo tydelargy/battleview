@@ -389,11 +389,14 @@ export function createScene(host, handlers = {}) {
       case 'move': return _c.set(0xffd23f);
       case 'movePad': return _c.set(0x8a7a1f);
       case 'tape': return _c.set(DIFF_COLORS.del);
+      case 'hazard': return _c.set(DIFF_COLORS.del);
       case 'post': return _c.set(0xd7dbe2);
       default: return _c.set(0x6b6670);            // the emptied floor
     }
   };
-  const _qa = new THREE.Quaternion(), AX = new THREE.Vector3(1, 0, 0), AZ = new THREE.Vector3(0, 0, 1);
+  const _qa = new THREE.Quaternion(), AX = new THREE.Vector3(1, 0, 0), AZ = new THREE.Vector3(0, 0, 1), AY = new THREE.Vector3(0, 1, 0);
+  const glassPart = (c, q) => c.dimmed || q.tone === 'hazard';          // the red shell of a condemned building is see-through
+  const DEL_TONES = ['tape', 'post', 'floor', 'skip', 'rubble', 'rubble2', 'hazard'];
   // ---- files the PR adds or moves: the map has no building for them yet (see web/changes.js, web/placement.js) ----
   function planGhosts() {
     S.ghosts = []; S.moves = []; const L = S.layout; if (!L || !S.baseLayout) return;
@@ -423,15 +426,17 @@ export function createScene(host, handlers = {}) {
   }
   function pushSites(p) {                           // the pools are begun by drawSpires, which also draws the toppers
     for (const { c, parts } of S.sites) {
-      const st = new THREE.Color(statusColor(c.status)), bp = c.dimmed ? gBoxes : boxes;
+      const st = new THREE.Color(statusColor(c.status));
       const base = { prId: c.prId, path: c.path, lines: c.lines, pct: c.pct, add: c.add, del: c.del };
       for (const q of parts) {
-        const ground = q.ground ? 0 : c.z0, kind = q.tone === 'add' || q.tone === 'crateDark' || q.ground ? 'add' : ['tape', 'post', 'floor', 'skip', 'rubble', 'rubble2'].includes(q.tone) ? 'del' : 'pr';
+        const bp = glassPart(c, q) ? gBoxes : boxes;
+        const ground = q.ground ? 0 : c.z0, kind = DEL_TONES.includes(q.tone) ? 'del' : q.tone === 'move' || q.tone === 'movePad' ? 'pr' : q.tone === 'add' || q.tone === 'crateDark' || q.ground ? 'add' : 'pr';
         const meta = { ...base, kind, n: kind === 'add' ? c.add : kind === 'del' ? c.del : undefined };
         const col = siteColor(q.tone, st);
-        if (q.diag) {                                // a diagonal of tape: a thin box turned in the plane of its wall
+        if (q.diag) {                                // a diagonal of tape: a thin box turned in the plane of its wall, or lying flat on a roof
           const z = ground + (q.z - ground) * p, len = q.len * p;
-          if (q.along === 'x') { _qa.setFromAxisAngle(AZ, q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(len, q.t, q.t), col, meta, undefined, _qa); }
+          if (q.flat) { _qa.setFromAxisAngle(AY, -q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(len, q.th || q.t, q.t), col, meta, undefined, _qa); }
+          else if (q.along === 'x') { _qa.setFromAxisAngle(AZ, q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(len, q.t, q.t), col, meta, undefined, _qa); }
           else { _qa.setFromAxisAngle(AX, -q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(q.t, q.t, len), col, meta, undefined, _qa); }
         } else bp.push(_p.set(q.x - CX, ground + (q.z - ground) * p, q.y - CY), _s.set(q.w, Math.max(0.02, q.h * p), q.d), col, meta);
       }
@@ -454,10 +459,10 @@ export function createScene(host, handlers = {}) {
     S.growth.p = p;
     const sites = new Set(S.sites.map((s) => s.c)), loose = S.columns.filter((c) => !sites.has(c));   // columns drawn as toppers
     const solidCols = loose.filter((c) => !c.dimmed), glassCols = loose.filter((c) => c.dimmed);
-    const count = (list) => list.reduce((a, s) => a + s.parts.length, 0), siteSolid = S.sites.filter((s) => !s.c.dimmed), siteGlass = S.sites.filter((s) => s.c.dimmed);
+    let sSolid = 0, sGlass = 0; for (const s of S.sites) for (const q of s.parts) { if (glassPart(s.c, q)) sGlass++; else sSolid++; }
     let gSolid = 0, gGlass = 0; for (const g of S.ghosts) for (const q of g.built?.parts || []) { if (g.dimmed) gGlass++; else gSolid++; }
-    boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0) + count(siteSolid) + gSolid); caps.begin(solidCols.length);
-    gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0) + count(siteGlass) + gGlass); gCaps.begin(glassCols.length);
+    boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0) + sSolid + gSolid); caps.begin(solidCols.length);
+    gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0) + sGlass + gGlass); gCaps.begin(glassCols.length);
     pushSites(p); pushGhosts(p);
     for (const c of loose) {
       const st = new THREE.Color(statusColor(c.status));
