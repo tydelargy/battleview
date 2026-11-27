@@ -84,6 +84,18 @@ try {
     assert.deepEqual((await world()).cities.map((c) => `${c.key}@${c.q},${c.r}`).sort(), before);
   });
 
+  await step('a PR on an old base says so, quietly: how far behind, that it conflicts, and what the target did to its files', async () => {
+    const w = await world(); await addAt(w.slots[0], 'acme/storefront'); await waitFor(() => window.battlemap.world.info().cities === 4, null, 'storefront appears');
+    const c = (await world()).cities.find((x) => x.key === 'acme/storefront'), p = await screen(c);
+    await page.mouse.click(p.sx, p.sy); await page.waitForSelector('body.in-city', { timeout: 12000 });
+    let n = 0; for (let i = 0; i < 40 && n !== 16; i++) { n = (await fetch(`${base}/r/acme--storefront/api/snapshot`).then((r) => r.json())).files.length; if (n !== 16) await new Promise((r) => setTimeout(r, 200)); } assert.equal(n, 16, 'its map');
+    await fetch(`${base}/r/acme--storefront/api/watch/pick`, { method: 'POST', headers: { 'X-Battlemap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: '#301' }) });
+    await page.waitForSelector('.card[data-id="#301"]', { timeout: 12000 }); await page.click('.card[data-id="#301"]'); await page.waitForSelector('#focus [data-base-note]');
+    const notes = await page.$$eval('#focus [data-base-note]', (n) => n.map((x) => x.textContent)); assert.deepEqual(notes, ['41 commits behind main', 'Conflicts with main']);
+    assert.deepEqual(await page.$$eval('#focus .chg.warn', (n) => n.map((x) => x.textContent)), ['MOVED ON BASE', 'MOVED ON BASE']);
+    await page.keyboard.press('Escape'); await page.click('.card[data-id="#301"]'); await page.keyboard.press('Escape');
+  });
+
   await step('no page errors', async () => assert.deepEqual(errors, [], `page errors: ${errors.join(' | ')}`));
 } finally { await browser.close(); srv.kill(); }
 for (const [s, m] of results) console.log(s, m);

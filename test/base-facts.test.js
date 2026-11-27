@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalisePR, FIELDS, behindQuery, behindFromGraphql, addBehind, sinceFromCompare, addSince } from '../server/providers/github.js';
 import { normalisePRs, normaliseBase, withBaseFacts, buildSnapshot } from '../server/snapshot.js';
+import { baseNotes, sinceTag } from '../web/changes.js';
 import { demoProvider } from '../server/demo.js';
 import { DEFAULTS } from '../server/config.js';
 
@@ -90,4 +91,14 @@ test('since survives the feed only when it is a known change; a move needs a pla
 test('the storefront says what main did to each file its stale PRs touch', async () => {
   const { prs } = await demoProvider().prs({ owner: 'acme', name: 'storefront' }), since = (n) => prs.find((p) => p.number === n).files.map((f) => f.since?.change || '-');
   assert.deepEqual(since(300), ['-']); assert.deepEqual(since(301), ['moved', 'moved']); assert.deepEqual(since(302), ['moved', 'moved', 'moved', 'moved', '-']); assert.deepEqual(since(303), ['removed', 'modified']); assert.deepEqual(since(307), ['added', '-']);
+});
+
+test('the panel words: quiet for a clean PR on the default branch, plain facts otherwise', () => {
+  assert.deepEqual(baseNotes({ ref: 'main', onDefault: true, mergeable: 'MERGEABLE', behind: 0 }, 'main'), []); assert.deepEqual(baseNotes(null), []); assert.deepEqual(baseNotes({}), []);
+  assert.deepEqual(baseNotes({ ref: 'main', onDefault: true, mergeable: 'CONFLICTING', behind: 41 }, 'main'), ['41 commits behind main', 'Conflicts with main']);
+  assert.deepEqual(baseNotes({ ref: 'release/2.x', onDefault: false, behind: 1 }, 'main'), ['Targets release/2.x, not main', '1 commit behind release/2.x']);
+  assert.deepEqual(baseNotes({ ref: 'you/filters', onDefault: false, stackedOn: '#309' }, 'main'), ['Stacked on #309 (targets you/filters)']);
+  assert.deepEqual(baseNotes({ ref: 'x', onDefault: false }), ['Targets x, not the default branch']);
+  assert.equal(sinceTag(undefined), null); assert.equal(sinceTag({ change: 'bogus' }), null); assert.equal(sinceTag({ change: 'moved', to: 'a/b.ts' })[0], 'MOVED ON BASE'); assert.match(sinceTag({ change: 'moved', to: 'a/b.ts' })[1], /to a\/b\.ts/);
+  assert.deepEqual(['removed', 'modified', 'added'].map((c) => sinceTag({ change: c })[0]), ['GONE ON BASE', 'CHANGED ON BASE', 'ALSO ADDED ON BASE']);
 });

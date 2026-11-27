@@ -38,3 +38,25 @@ export function anchorFor(layout, path) {
   const w = layout.world || { w: 1000, h: 640 };
   return best ? { x: best.x + best.w / 2, y: best.y + best.h / 2, plate: best } : { x: w.w / 2, y: w.h / 2, plate: null };
 }
+
+/**
+ * What the feed says about where a PR stands against its target, in plain words, nothing interpreted. Quiet by design: a PR that
+ * targets the default branch, is up to date and merges cleanly says nothing. `base` is pr.base from the snapshot; `defaultName` is the
+ * default branch's name when we have it.
+ */
+export function baseNotes(base, defaultName = null) {
+  if (!base || !base.ref) return [];
+  const out = [], name = defaultName || 'the default branch';
+  if (base.stackedOn) out.push(`Stacked on ${base.stackedOn} (targets ${base.ref})`);
+  else if (base.onDefault === false) out.push(`Targets ${base.ref}, not ${name}`);
+  if (base.behind > 0) out.push(`${base.behind} commit${base.behind > 1 ? 's' : ''} behind ${base.ref}`);
+  if (base.mergeable === 'CONFLICTING') out.push(`Conflicts with ${base.ref}`);
+  return out;
+}
+
+const SINCE_TAGS = { removed: ['GONE ON BASE', 'The target deleted this file after the PR branched'], moved: ['MOVED ON BASE', 'The target moved this file after the PR branched'], modified: ['CHANGED ON BASE', 'The target changed this file after the PR branched'], added: ['ALSO ADDED ON BASE', 'The target added a file at this path after the PR branched'] };
+/** [text, tip] for what the target did to this file since the PR branched, or null. */
+export function sinceTag(since) {
+  const t = since && SINCE_TAGS[since.change]; if (!t) return null;
+  return [t[0], since.change === 'moved' && since.to ? `${t[1]}, to ${since.to}` : t[1]];
+}

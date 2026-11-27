@@ -325,3 +325,4 @@ body.hub:not(.in-city) #toast{bottom:200px}
 .chg.add{background:color-mix(in srgb,var(--add) 22%,transparent);color:var(--add)}
 .chg.del{background:color-mix(in srgb,var(--del) 22%,transparent);color:var(--del)}
 .chg.mv{background:rgba(255,210,63,.2);color:#ffd23f}
+.chg.warn{background:color-mix(in srgb,#ffb347 18%,transparent);color:#ffb347}

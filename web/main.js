@@ -1,3 +1,4 @@
+import { baseNotes, sinceTag } from './changes.js';
 import { api, base, url } from './api.js';
 import { startWorld } from './worldui.js';
 import { SCALES, TOPPERS, scaleTicks, DIFF_COLORS, MIN_COVER } from './spires.js';
@@ -204,7 +205,8 @@ async function loadTransitions(prId) {
 function fileTag(f) {
   const onMap = state.scene?.layout()?.byPath;
   const [text, cls, tip] = f.change === 'removed' ? ['DELETED', 'del', 'This PR deletes the file'] : f.change === 'renamed' && f.from ? ['MOVED', 'mv', `Moved from ${f.from}`] : (f.change === 'added' || (onMap && !onMap.has(f.path))) ? ['NEW', 'add', 'A new file: not on the map until it is merged'] : [null];
-  return text ? h('i', { class: `chg ${cls}`, title: tip }, text) : null;
+  const sn = sinceTag(f.since), onBase = sn ? h('i', { class: 'chg warn', title: sn[1] }, sn[0]) : null;
+  return text || onBase ? [text ? h('i', { class: `chg ${cls}`, title: tip }, text) : null, onBase] : null;
 }
 function renderFocus() {
   const box = $('focus'), s = state.snap, pr = s.prs.find((p) => p.id === state.sel);
@@ -249,6 +251,7 @@ function renderFocus() {
     notifyMenu(pr),
     pr.needs ? h('div', { style: 'color:var(--accent)' }, pr.needs) : null,
     pr.ended ? trackingBlock(pr) : null,      // an ended PR's only action is dismissing it, so it goes first
+    baseNotes(pr.base, s.city?.branch).length ? h('div', { class: 'blk' }, h('h3', null, 'BASE'), baseNotes(pr.base, s.city?.branch).map((t) => h('div', { class: 'sub', 'data-base-note': '' }, t))) : null,
     h('div', { class: 'blk' }, h('h3', null, 'DIFF'),
       h('div', { class: 'sum' }, h('span', { class: 'a' }, `+${pr.adds}`), h('span', { class: 'd' }, `−${pr.dels}`), h('span', { class: 'sub' }, `${pr.files.length} files · ${hunks} hunks${synth ? ' (estimated)' : ''}`)),
       h('div', { class: 'bar' }, h('i', { class: 'a', style: `width:${(pr.adds / total) * 100}%` }), h('i', { class: 'd', style: `width:${(pr.dels / total) * 100}%` })),
