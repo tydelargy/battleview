@@ -7,6 +7,7 @@ import { createJiraClient, syncJira, JiraError } from './jira/client.js';
 import { buildSnapshot, normalisePRs, extractKey } from './snapshot.js';
 import { WatchStore, classify, reconcileEnded, matchPath, watchedFiles } from './watch.js';
 import { NotifyStore, eventsFor, resolveFor } from './notify.js';
+import { isTreeish } from './providers/github.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -95,7 +96,7 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
       authors: [...new Set(app.prs.map((p) => p.author))].sort(),
     };
   };
-  const snapshot = () => withNotifications({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get() }), version: app.version, sampleMode: app.sampleMode, ...(app.city ? { city: app.city } : {}), problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
+  const snapshot = () => withNotifications({ ...buildSnapshot({ files: app.files, prs: app.view.live, ended: app.view.ended, jira: app.jira ? { ...app.jira, error: app.jiraError?.message, hint: app.jiraError?.hint } : (app.jiraError ? { ok: false, error: app.jiraError.message, hint: app.jiraError.hint } : null), cfg: store.get(), defaultBranch: app.city?.branch || null }), version: app.version, sampleMode: app.sampleMode, ...(app.city ? { city: app.city } : {}), problems: app.problems, mock: !!store.runtimeOverride, watch: watchInfo(), available: app.view.available });
   /** Alerts you have silenced move to their own list; the inbox goes to the browser newest first. */
   function withNotifications(snap) {
     const sil = notify.silencedIds(), n = notify.get();
@@ -160,6 +161,13 @@ export function createApp({ store = new ConfigStore(), watch, notify, files = []
       if (origin && new URL(origin).host !== req.headers.host) return json(res, 403, { error: 'cross-origin request refused' });
     }
     if (p === '/api/snapshot' && m === 'GET') return json(res, 200, snapshot());
+    if (p === '/api/base-tree' && m === 'GET') {                              // the files as they stood on another branch or at a commit: the base a PR was written against
+      const at = url.searchParams.get('at') || '';
+      if (!app.treeAt) return json(res, 404, { error: 'this map has no other branches to look at' });
+      if (!isTreeish(at)) return json(res, 400, { error: 'at must be a branch name or a commit' });
+      try { const t = await app.treeAt(at); return json(res, 200, { at, files: t.files, warnings: t.warnings || [], estimated: t.estimated ?? true }); }
+      catch (e) { return json(res, 502, { error: String(e.message || e).split('\n')[0] }); }
+    }
     if (p === '/api/events' && m === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
       res.write(`event: snapshot\ndata: ${app.version}\n\n`);

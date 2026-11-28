@@ -1,3 +1,5 @@
+import { baseNotes, sinceTag } from './changes.js';
+import { viewPlan } from './baseview.js';
 import { api, base, url } from './api.js';
 import { startWorld } from './worldui.js';
 import { SCALES, TOPPERS, scaleTicks, DIFF_COLORS, MIN_COVER } from './spires.js';
@@ -39,7 +41,7 @@ function fill(el, ...kids) {
 }
 const initials = (a) => (a.replace(/[^A-Za-z0-9 ._-]/g, '').split(/[ ._-]+/).filter(Boolean).map((s) => s[0]).join('').slice(0, 2) || a.slice(0, 2)).toUpperCase();
 
-const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, transitions: null, cfg: null, trackRefresh: null, known: null, knownNotifs: null, notifBaseline: null, showSilenced: false, nprOpen: false, wmarks: ls.get('wmarks', true), bstyle: normaliseStyle(ls.get('bstyle', null)) };
+const state = { snap: null, sel: null, filters: normaliseFilters(ls.get('filters', null)), ageLift: ls.get('ageLift', false), filterRefresh: null, fog: ls.get('fog', true), scale: ls.get('scale', 'sqrt'), topper: ls.get('topper', 'share'), lines: ls.get('lines', 'selected'), labels: ls.get('labels', true), flags: ls.get('flags', true), view: ['2d', 'iso', '3d'].includes(ls.get('view', 'iso')) ? ls.get('view', 'iso') : 'iso', scene: null, viewChoice: {}, baseTrees: new Map(), transitions: null, cfg: null, trackRefresh: null, known: null, knownNotifs: null, notifBaseline: null, showSilenced: false, nprOpen: false, wmarks: ls.get('wmarks', true), bstyle: normaliseStyle(ls.get('bstyle', null)) };
 
 /* ---------- scene (optional: the UI still works if WebGL or three is unavailable) ---------- */
 async function startScene() {
@@ -104,14 +106,53 @@ function setFilters(patch) {
   renderAll(); applyScene(); state.filterRefresh?.();
 }
 const clearFilters = () => setFilters({ ...emptyFilters(), sort: state.filters.sort });
+/**
+ * Which map is on screen. Nothing selected: the latest default branch, with PRs that cannot be drawn there (stacked, on another branch,
+ * too far behind to read) as flags at the side. A PR selected whose plan says "its own base" (web/baseview.js): the map is the tree at
+ * that base, with only that PR on it, and a big banner says so. That is the one case where what you look at changes the map.
+ */
+const BASE_TTL = 120_000;
+function baseTree(at) {
+  const hit = state.baseTrees.get(at);
+  if (hit && (hit.files || hit.error) && Date.now() - hit.t < BASE_TTL) return hit;
+  if (hit?.loading) return hit;
+  state.baseTrees.set(at, { loading: true, t: Date.now() });
+  api.get('/api/base-tree?at=' + encodeURIComponent(at)).then((r) => ({ t: Date.now(), ...(Array.isArray(r.files) ? { files: r.files } : { error: r.error || 'could not read it' }) }), (e) => ({ t: Date.now(), error: String(e.message || e) }))
+    .then((res) => { state.baseTrees.set(at, res); const p = state.snap?.prs.find((x) => x.id === state.sel); if (p && viewPlan(p, state.viewChoice[p.id]).at === at) { renderFocus(); applyScene(); if (res.files) state.scene?.flyToPR(p.id); } });
+  return state.baseTrees.get(at);
+}
 function applyScene() {
   const sc = state.scene, s = state.snap; if (!sc || !s) return;
   sc.setStyle(state.bstyle);
-  sc.setFiles(s.files);
-  sc.setUI({ labels: state.labels, flags: state.flags, lines: state.lines, watched: state.wmarks });
-  sc.setWatched(s.watch.watchedPaths);
   const selPR = s.prs.find((p) => p.id === state.sel), live = visiblePRs().filter((p) => !p.ended);
-  sc.setPRs(s.prs, { mode: state.scale, topper: state.topper, focusId: selPR && !selPR.ended ? state.sel : null, ageLift: state.ageLift, visible: new Set(live.map((p) => p.id)), fog: state.fog, statusColors, view: state.view });
+  const plan = selPR && !selPR.ended ? viewPlan(selPR, state.viewChoice[selPR.id]) : null, tree = plan?.mode === 'base' ? baseTree(plan.at) : null;
+  const common = { mode: state.scale, topper: state.topper, ageLift: state.ageLift, fog: state.fog, statusColors, view: state.view };
+  sc.setUI({ labels: state.labels, flags: state.flags, lines: state.lines, watched: state.wmarks });
+  if (tree?.files) {                                  // the PR on its own base, alone
+    sc.setFiles(tree.files); sc.setWatched([]);
+    sc.setPRs([selPR], { ...common, focusId: selPR.id, visible: new Set([selPR.id]), fromBase: true, aside: null });
+  } else {
+    sc.setFiles(s.files); sc.setWatched(s.watch.watchedPaths);
+    const aside = new Set(s.prs.filter((p) => !p.ended && ['base', 'blind'].includes(viewPlan(p).mode)).map((p) => p.id));      // the default plan: a choice only applies once the PR is selected
+    sc.setPRs(s.prs, { ...common, focusId: selPR && !selPR.ended ? state.sel : null, visible: new Set(live.map((p) => p.id)), fromBase: false, aside });
+  }
+  renderBanner(selPR, plan, tree);
+}
+/** The big header in the middle of the screen: which base the map is showing, or that this PR cannot be drawn. */
+function renderBanner(pr, plan, tree) {
+  const b = $('baseBanner'); if (!b) return;
+  const show = (cls, kicker, title, ref, detail, extra) => { b.className = cls; b.hidden = false; fill(b, h('small', null, kicker), h('h2', null, title), ref ? h('div', { class: 'ref' }, ref) : null, detail ? h('p', null, detail) : null, extra || null); };
+  if (!pr || !plan || plan.mode === 'master') { b.hidden = true; return; }
+  if (plan.mode === 'blind') return show('blind', pr.id, plan.headline, null, plan.detail);
+  if (tree?.error) return show('blind', pr.id, 'This PR can not be visualized', null, `The base it needs (${plan.at.length > 20 ? plan.at.slice(0, 7) : plan.at}) could not be read: ${tree.error}. It is still tracked, and you still get its notifications.`);
+  if (!tree?.files) return show('', pr.id, 'Loading its base\u2026', plan.at.length > 20 ? plan.at.slice(0, 7) : plan.at, null);
+  const back = plan.forced ? null : h('button', { type: 'button', onclick: () => setViewChoice(pr.id, 'master') }, 'BACK TO LATEST ' + (state.snap.city?.branch || 'MAIN').toUpperCase());
+  show('', 'THE MAP NOW SHOWS ITS BASE', plan.headline, 'base: ' + (plan.at.length > 20 ? `${plan.at.slice(0, 7)} (where it branched)` : plan.at), plan.detail, back);
+}
+function setViewChoice(id, choice) {
+  state.viewChoice[id] = choice; renderFocus(); applyScene();
+  const p = state.snap?.prs.find((x) => x.id === id), plan = p && viewPlan(p, choice);
+  if (plan && (plan.mode === 'master' || state.baseTrees.get(plan.at)?.files)) state.scene?.flyToPR(id);          // a loading base flies in when it arrives
 }
 function connectEvents() {
   const es = new EventSource(url('/api/events')); state.es = es;
@@ -203,8 +244,21 @@ async function loadTransitions(prId) {
 /** NEW / DELETED / MOVED beside a file in the PR panel, so a file the map has no building for is still plainly there. */
 function fileTag(f) {
   const onMap = state.scene?.layout()?.byPath;
-  const [text, cls, tip] = f.change === 'removed' ? ['DELETED', 'del', 'This PR deletes the file'] : f.change === 'renamed' && f.from ? ['MOVED', 'mv', `Moved from ${f.from}`] : (f.change === 'added' || (onMap && !onMap.has(f.path))) ? ['NEW', 'add', 'A new file: not on the map until it is merged'] : [null];
-  return text ? h('i', { class: `chg ${cls}`, title: tip }, text) : null;
+  const [text, cls, tip] = f.change === 'removed' ? ['DELETED', 'del', 'This PR deletes the file'] : f.change === 'renamed' && f.from ? ['MOVED', 'mv', `Moved from ${f.from}`] : (f.change === 'added' || (onMap && !f.since && !onMap.has(f.path))) ? ['NEW', 'add', 'A new file: not on the map until it is merged'] : [null];
+  const sn = sinceTag(f.since), onBase = sn ? h('i', { class: 'chg warn', title: sn[1] }, sn[0]) : null;
+  return text || onBase ? [text ? h('i', { class: `chg ${cls}`, title: tip }, text) : null, onBase] : null;
+}
+function viewBlock(pr, s) {
+  const notes = baseNotes(pr.base, s.city?.branch), plan = viewPlan(pr, state.viewChoice[pr.id]);
+  if (!notes.length && plan.mode === 'master' && !plan.choices) return null;
+  const main = s.city?.branch || 'main';
+  return h('div', { class: 'blk', 'data-view': plan.mode }, h('h3', null, 'BASE'), notes.map((t) => h('div', { class: 'sub', 'data-base-note': '' }, t)),
+    plan.mode === 'blind' ? h('div', { class: 'blind', 'data-blind': '' }, plan.headline + '. ' + plan.detail) : null,
+    plan.forced && plan.mode === 'base' ? h('div', { class: 'sub' }, `Drawn on ${plan.at}, alone. ${plan.detail}`) : null,
+    plan.choices ? h('div', { class: 'viewpick', role: 'group', 'aria-label': 'Which map to view this PR on' },
+      h('button', { type: 'button', 'data-pick': 'master', 'aria-pressed': String(plan.mode === 'master'), onclick: () => setViewChoice(pr.id, 'master') }, `LATEST ${main.toUpperCase()}`),
+      h('button', { type: 'button', 'data-pick': 'own', 'aria-pressed': String(plan.mode === 'base'), onclick: () => setViewChoice(pr.id, 'own') }, 'ITS OWN BASE')) : null,
+    plan.choices && plan.mode === 'master' ? h('div', { class: 'sub' }, 'Drawn on the latest map. Where its target has moved or deleted a file, a ghost shell marks the old place.') : null);
 }
 function renderFocus() {
   const box = $('focus'), s = state.snap, pr = s.prs.find((p) => p.id === state.sel);
@@ -249,6 +303,7 @@ function renderFocus() {
     notifyMenu(pr),
     pr.needs ? h('div', { style: 'color:var(--accent)' }, pr.needs) : null,
     pr.ended ? trackingBlock(pr) : null,      // an ended PR's only action is dismissing it, so it goes first
+    viewBlock(pr, s),
     h('div', { class: 'blk' }, h('h3', null, 'DIFF'),
       h('div', { class: 'sum' }, h('span', { class: 'a' }, `+${pr.adds}`), h('span', { class: 'd' }, `−${pr.dels}`), h('span', { class: 'sub' }, `${pr.files.length} files · ${hunks} hunks${synth ? ' (estimated)' : ''}`)),
       h('div', { class: 'bar' }, h('i', { class: 'a', style: `width:${(pr.adds / total) * 100}%` }), h('i', { class: 'd', style: `width:${(pr.dels / total) * 100}%` })),
@@ -442,6 +497,7 @@ function openKey() {
         h('li', null, h('b', null, 'Belts on the building'), ' (Layers > Focused PR > File) = the building is the file, line 1 at the roof and the last line at the ground. Every hunk is a belt at its place in the file, green for lines added with the red for lines deleted under it, as thick as the share of the file it covers. A ruler up one corner marks every quarter. Hunks without line numbers are spread evenly in file order.'),
         h('li', null, h('b', null, 'Crates and a skip'), ' (Layers > Focused PR > Crates, the default in Buildings) = the focused PR\u2019s change as a yard: additions are a solid stack of green crates on a pallet, deletions are a rubble heap in a red skip beside it. Same footprint and level height, as many levels as the lines need on the one scale, so count the levels.'),
         h('li', null, h('b', null, 'New, moved and deleted files'), ' (Buildings style). A file a PR creates is not in the default branch, so the map makes room for it: an empty ', h('b', null, 'green scaffold'), ' standing where the building will go, as big as the file will be. A file a PR moves wears ', h('b', null, 'yellow scaffolding'), ' round its old building and an empty yellow one at its new home, joined by a dashed arc. A file a PR deletes is ', h('b', null, 'condemned'), ': a see-through red shell in the building\u2019s own shape, a big red X of tape across its roof, red tape in an X down every wall, rubble beside it (no red rings: those are the belts of a file\u2019s deleted lines). All of it shows whatever PR is focused, and nothing moves when you focus another: the map only changes when the set of tracked PRs does. The PR panel tags these files NEW, MOVED and DELETED.'),
+        h('li', null, h('b', null, 'PRs on other bases'), '. The map is the latest default branch. A PR that is behind with no conflict is drawn there: where its target moved or deleted a file, the edit stands on the file\u2019s new home and a ', h('b', null, 'ghost shell outlined in the PR\u2019s colour'), ' marks the old place. A PR with a conflict can be viewed on latest main or, with a button in its panel, on ', h('b', null, 'its own base'), ' (the map as it was where the PR branched). A stacked PR, or one aimed at another branch, is always drawn on ', h('b', null, 'its own base'), ' and nothing else: a big header says the base has changed. A PR too far behind to read is not drawn: its flag waits under NOT ON THE MAP, with a message. An orange frame on a roof (focused PR only) means its target changed that file too.'),
         h('li', null, h('b', null, 'Red-taped floor'), ' = lines were deleted. An emptied floor with red tape in an X on every face. The stack is as tall as lines deleted on that same scale (one floor is 2.4 of it, up to 24 floors); focused, it is one tower on the right of the roof, the same size as the additions tower.'),
         h('li', null, 'The Plain and Colours styles keep the plain toppers in the overview, but a focused PR can use these same views there too (Layers > Focused PR; Hunks, the classic stack, is their default).')),
       h('h3', null, 'FOCUSED PR'),
@@ -726,14 +782,14 @@ addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$('filebar').hidden) $('filebar').hidden = true; else if (!$('filters').hidden) toggleFilters(false); else if (!$('layers').hidden) toggleLayers(false); else if (!modal.hidden) closeModal(); else if (!$('notifs').hidden) toggleNotifs(false); else if (!$('alerts').hidden) $('alerts').hidden = true; else if (state.nprOpen) { state.nprOpen = false; renderFocus(); } else if (state.sel) selectPR(null);
 });
-window.battlemap = { state, selectPR, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
+window.battlemap = { state, selectPR, setViewChoice, refresh, openSettings, openTrack, showFileBar };   // handy in the console and in tests
 
 /* ---------- boot: one map, or (served by the hub) a world of cities you can go into ---------- */
 async function enterCity() { await startScene(); await refresh(); connectEvents(); }
 function leaveCity() {
   state.es?.close(); state.es = null; clearTimeout(pending);
-  state.scene?.dispose(); state.scene = null; state.snap = null; state.sel = null; state.known = null; state.knownNotifs = null; state.notifBaseline = null; state.transitions = null; state.nprOpen = false;
-  for (const id of ['focus', 'alerts', 'notifs', 'filters', 'layers', 'filebar', 'tip', 'nogl']) { const e = $(id); if (e) e.hidden = true; }
+  state.scene?.dispose(); state.scene = null; state.snap = null; state.sel = null; state.viewChoice = {}; state.baseTrees = new Map(); state.known = null; state.knownNotifs = null; state.notifBaseline = null; state.transitions = null; state.nprOpen = false;
+  for (const id of ['focus', 'baseBanner', 'alerts', 'notifs', 'filters', 'layers', 'filebar', 'tip', 'nogl']) { const e = $(id); if (e) e.hidden = true; }
   $('cards').replaceChildren(); $('chips').replaceChildren(); $('counters').replaceChildren();
 }
 const hubMode = await fetch('/api/hub/world').then((r) => r.json()).then((j) => Array.isArray(j.cities)).catch(() => false);

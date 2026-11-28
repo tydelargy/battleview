@@ -21,7 +21,7 @@ const MAX_CITIES = 60;
 
 /** Where a hub gets its repos from: three calls (the file tree, three PR numbers, the PRs). GitHub through gh by default; the demo has its own. */
 export const ghProvider = ({ gh = 'gh', exec } = {}) => { const o = { gh, ...(exec ? { exec } : {}) }; return {
-  tree: (ref) => fetchRepoTree({ repo: ref, ...o }), stats: (ref) => fetchPRStats({ repo: ref, ...o }), prs: (ref) => fetchGithub({ repo: `${ref.owner}/${ref.name}`, host: ref.host, ...o }) }; };
+  tree: (ref, opts = {}) => fetchRepoTree({ repo: ref, ...(opts.at ? { at: opts.at } : {}), ...o }), stats: (ref) => fetchPRStats({ repo: ref, ...o }), prs: (ref) => fetchGithub({ repo: `${ref.owner}/${ref.name}`, host: ref.host, ...o }) }; };
 
 export function createHub({ dataDir, store = new ConfigStore({ persist: false }), gh = 'gh', exec, provider = null, now = () => Date.now(), log = () => {},
   statsTtl = 300_000, treeTtl = 3_600_000, prEvery = 120_000, idleAfter = 300_000, autoSync = true } = {}) {
@@ -109,6 +109,17 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
     return { ok: true };
   }
 
+  // ---- the files as they stood somewhere else (a PR's branch point, or the branch it is stacked on) ----
+  // Read on demand and remembered for a couple of minutes (a commit never changes; a branch moves). A handful at most.
+  const atCache = new Map(), AT_TTL = 120_000, AT_MAX = 12;
+  async function treeAt(id, at) {
+    const c = find(id); if (!c) throw new Error('no such city');
+    const key = `${id}|${at}`, hit = atCache.get(key); if (hit && now() - hit.t < AT_TTL) return hit.tree;
+    const tree = await source.tree(cityRepo(c), { at });
+    atCache.set(key, { t: now(), tree }); while (atCache.size > AT_MAX) atCache.delete(atCache.keys().next().value);
+    return tree;
+  }
+
   // ---- going into a city: its app, and its PRs, start now ----
   async function syncPRs(id) {
     const c = find(id), app = hub.apps.get(id); if (!c || !app) return;
@@ -126,6 +137,7 @@ export function createHub({ dataDir, store = new ConfigStore({ persist: false })
       const tree = readTree(id) || { files: [], warnings: [] };
       const app = createApp({ store, watch: watchOf(id), notify: notifyOf(id), files: tree.files, prs: null, sampleMode: false, log });   // no feed yet: what was tracked last time shows at once, the sync replaces it
       app.city = { id, key: repoKey(c), estimated: tree.estimated ?? true, branch: tree.branch || null, warnings: tree.warnings || [], error: null };
+      app.treeAt = (at) => treeAt(id, at);
       hub.apps.set(id, app); app.start();
       if (autoSync) { syncPRs(id); if (!tree.fetchedAt || now() - tree.fetchedAt > treeTtl) refreshTree(id); }
     }

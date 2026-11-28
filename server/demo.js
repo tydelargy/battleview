@@ -1,4 +1,4 @@
-// A pretend GitHub for trying Battle Map with nothing to connect to (battlemap --demo, npm run mock): three fake repos with
+// A pretend GitHub for trying Battle Map with nothing to connect to (battlemap --demo, npm run mock): four fake repos with
 // files and PRs, handed to the hub through the same three calls a real GitHub gets. "you" is the viewer.
 import { sampleFiles, samplePRs } from './sample.js';
 import { hash, rng } from './hunks.js';
@@ -30,7 +30,7 @@ const MOBILE = tree({
 // change: 'added' (not on the map yet), 'removed' (a building that comes down) or 'renamed' (moved from `from`); nothing means just changed
 const f = (path, add, del, change, from) => ({ path, add, del, ...(change ? { change } : {}), ...(from ? { from } : {}) });
 const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
-const pr = (n, title, author, status, files, hAgo, branch) => ({ id: `#${n}`, number: n, title, branch: branch || `${author}/${title.split(' ')[0].toLowerCase()}`, author, status, files, createdAt: ago(hAgo + 30), updatedAt: ago(hAgo), url: `https://github.com/acme/demo/pull/${n}` });
+const pr = (n, title, author, status, files, hAgo, branch, extra) => ({ id: `#${n}`, number: n, title, branch: branch || `${author}/${title.split(' ')[0].toLowerCase()}`, author, status, files, createdAt: ago(hAgo + 30), updatedAt: ago(hAgo), url: `https://github.com/acme/demo/pull/${n}`, ...extra });
 const BILLING_PRS = () => [
   pr(118, 'ENG-481 Round tax per line, not per invoice', 'maya', 'review_requested', [f('src/tax/round.ts', 62, 18), f('src/invoices/total.ts', 20, 9), f('test/round.test.ts', 80, 0, 'added')], 5),
   pr(121, 'ENG-433 CSV export for invoices', 'you', 'ci_failing', [f('src/invoices/export.ts', 140, 0, 'added'), f('src/invoices/list.ts', 12, 3)], 3),
@@ -47,17 +47,63 @@ const MOBILE_PRS = () => [
   pr(45, 'Silent token refresh', 'agent', 'review_requested', [f('src/api/auth.ts', 70, 25), f('src/api/client.ts', 31, 9)], 15),
   pr(47, 'ENG-460 Tab bar badges; replace Toast with the shared one', 'devon', 're_review', [f('src/navigation/Tabs.tsx', 40, 11), f('src/components/Toast.tsx', 0, 80, 'removed'), f('src/screens/Settings.tsx', 6, 2)], 26),
 ];
+
+// acme/storefront: PRs whose BASE is not the default branch's head. Since these PRs branched, `main` moved src/cart/ to
+// src/checkout/cart/, moved src/utils/format.ts to src/lib/format.ts, deleted src/legacy/oldCheckout.ts and added src/lib/money.ts.
+// GitHub lists a PR's files against its own merge base, so a stale PR names paths the way they were when it branched: those paths are
+// not on the map. `base` (the branch it targets), `behind` (commits it is behind that branch) and `mergeState` are what GitHub knows and
+// the feed does not carry yet; they are here so the cases say what is true. test/stale-base.test.js records what the map does with each.
+const STORE = tree({
+  'src/checkout/cart': { 'Cart.tsx': 300, 'CartItem.tsx': 120, 'totals.ts': 140, 'promo.ts': 180 },
+  'src/checkout': { 'Checkout.tsx': 380, 'Payment.tsx': 260 },
+  'src/lib': { 'format.ts': 90, 'money.ts': 110, 'http.ts': 150 },
+  'src/catalog': { 'Catalog.tsx': 340, 'Product.tsx': 280, 'search.ts': 200 },
+  'src/account': { 'Login.tsx': 180, 'Profile.tsx': 220 },
+  config: { 'build.ts': 70 },
+  test: { 'cart.test.ts': 220 },
+});
+// The storefront as it stood where its PRs branched: before main moved src/cart/ and src/utils/format.ts, deleted src/legacy/oldCheckout.ts and added
+// src/lib/money.ts. A PR's own paths are right in this tree. `at` below asks for it by the commit a PR says it branched from.
+const BRANCHED = 'a1'.repeat(20), RELEASE = 'b2'.repeat(20);
+const STORE_OLD = () => tree({
+  'src/cart': { 'Cart.tsx': 300, 'CartItem.tsx': 120, 'totals.ts': 140, 'promo.ts': 180 }, 'src/checkout': { 'Checkout.tsx': 380, 'Payment.tsx': 260 },
+  'src/utils': { 'format.ts': 90 }, 'src/lib': { 'http.ts': 150 }, 'src/legacy': { 'oldCheckout.ts': 210 },
+  'src/catalog': { 'Catalog.tsx': 340, 'Product.tsx': 280, 'search.ts': 200 }, 'src/account': { 'Login.tsx': 180, 'Profile.tsx': 220 }, config: { 'build.ts': 70 }, test: { 'cart.test.ts': 220 },
+});
+const STORE_RELEASE = () => [...STORE_OLD(), ...tree({ 'src/catalog/v2': { 'search.ts': 160, 'index.ts': 40 } })];
+const STORE_AT = { [BRANCHED]: STORE_OLD, [RELEASE]: STORE_RELEASE, 'release/2.x': STORE_RELEASE, 'you/filters': () => [...STORE, ...tree({ 'src/catalog': { 'filters.ts': 140 } })] };
+const mv = (to) => ({ change: 'moved', to }), gone = { change: 'removed' }, edited = { change: 'modified' }, both = { change: 'added' };
+const sf = (file, since) => ({ ...file, since });   // a PR file, plus what the target did to it since the PR branched
+const stale = (ref, behind, mergeState, extra = {}) => ({ base: { ref, mergeable: mergeState === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE', mergeState, behind, ...(behind > 0 ? { mergeBase: ref === 'main' ? BRANCHED : RELEASE } : {}), ...extra } });   // what GitHub says
+const STORE_PRS = () => [
+  pr(300, 'Control: edit a product page (up to date)', 'you', 'review_requested', [f('src/catalog/Product.tsx', 44, 12)], 3, undefined, stale('main', 0, 'CLEAN')),
+  pr(301, 'Promo codes: edit the cart (cart moved on main)', 'you', 'review_requested', [sf(f('src/cart/Cart.tsx', 60, 14), mv('src/checkout/cart/Cart.tsx')), sf(f('src/cart/totals.ts', 22, 6), mv('src/checkout/cart/totals.ts'))], 6, undefined, stale('main', 41, 'DIRTY')),
+  pr(302, 'Cart rewrite, 5 files in the folder main renamed', 'devon', 'review_requested', [sf(f('src/cart/Cart.tsx', 120, 80), mv('src/checkout/cart/Cart.tsx')), sf(f('src/cart/CartItem.tsx', 40, 10), mv('src/checkout/cart/CartItem.tsx')), sf(f('src/cart/totals.ts', 30, 12), mv('src/checkout/cart/totals.ts')), sf(f('src/cart/promo.ts', 55, 3), mv('src/checkout/cart/promo.ts')), f('src/cart/Coupons.tsx', 90, 0, 'added')], 30, undefined, stale('main', 41, 'DIRTY')),
+  pr(303, 'Tidy checkout (touches a file main deleted)', 'maya', 'changes_requested', [sf(f('src/legacy/oldCheckout.ts', 18, 7), gone), sf(f('src/checkout/Checkout.tsx', 36, 20), edited)], 18, undefined, stale('main', 25, 'DIRTY')),
+  pr(304, 'Remove the old formatter (main moved it)', 'ines', 'review_requested', [sf(f('src/utils/format.ts', 0, 90, 'removed'), mv('src/lib/format.ts')), f('src/lib/http.ts', 8, 2)], 40, undefined, stale('main', 12, 'DIRTY')),
+  pr(305, 'Move promo.ts into its own folder (main moved it first)', 'kofi', 'review_requested', [sf(f('src/checkout/promo/promo.ts', 6, 2, 'renamed', 'src/cart/promo.ts'), mv('src/checkout/cart/promo.ts'))], 22, undefined, stale('main', 41, 'DIRTY')),
+  pr(306, 'Move format.ts to lib/ (main already did)', 'agent', 'review_requested', [sf(f('src/lib/format.ts', 4, 1, 'renamed', 'src/utils/format.ts'), mv('src/lib/format.ts'))], 9, undefined, stale('main', 12, 'DIRTY')),
+  pr(307, 'Add money.ts (main added it too)', 'devon', 'ci_failing', [sf(f('src/lib/money.ts', 120, 0, 'added'), both), f('src/checkout/Payment.tsx', 14, 3)], 14, undefined, stale('main', 8, 'DIRTY')),
+  pr(308, 'Backport search fix to the 2.x release', 'maya', 'review_requested', [sf(f('src/catalog/search.ts', 30, 8), edited), f('src/catalog/v2/search.ts', 110, 0, 'added'), f('src/catalog/v2/index.ts', 12, 0, 'added')], 50, undefined, stale('release/2.x', 260, 'CLEAN')),
+  pr(309, 'New search filters', 'you', 'review_requested', [f('src/catalog/filters.ts', 140, 0, 'added'), f('src/catalog/search.ts', 26, 5)], 8, 'you/filters', stale('main', 0, 'CLEAN')),
+  pr(310, 'Filter chips (stacked on #309)', 'you', 'draft', [f('src/catalog/filters.ts', 34, 6), f('src/catalog/Catalog.tsx', 28, 4)], 4, undefined, stale('you/filters', 0, 'CLEAN')),
+  pr(311, 'Promo tweak: behind main, merges cleanly', 'you', 'review_requested', [sf(f('src/cart/promo.ts', 12, 3), mv('src/checkout/cart/promo.ts')), sf(f('src/legacy/oldCheckout.ts', 9, 4), gone), f('src/account/Login.tsx', 14, 2)], 5, undefined, stale('main', 12, 'BEHIND')),
+  pr(312, 'Giant refactor, long behind: too much changed to read', 'devon', 'review_requested', [f('src/catalog/Catalog.tsx', 220, 90), f('src/account/Profile.tsx', 60, 20)], 70, undefined, stale('main', 900, 'DIRTY', { sinceCut: true })),
+];
 const REPOS = {
   'acme/platform': { files: sampleFiles, prs: samplePRs, description: 'The monolith (the built-in sample)', estimated: false },
   'acme/billing-api': { files: () => BILLING, prs: BILLING_PRS, description: 'Invoices, payments and the ledger', estimated: true },
   'acme/mobile-app': { files: () => MOBILE, prs: MOBILE_PRS, description: 'The customer app', estimated: true },
+  'acme/storefront': { files: () => STORE, prs: STORE_PRS, description: 'The shop front end: PRs on old or different bases', estimated: true },
 };
 
 export function demoProvider() {
   const find = (ref) => REPOS[`${ref.owner}/${ref.name}`.toLowerCase()] || (() => { throw new SyncError(`HTTP 404: Not Found. This is the demo: try ${Object.keys(REPOS).join(' or ')}`); })();
   return {
     names: Object.keys(REPOS),
-    async tree(ref) { const r = find(ref); return { files: r.files(), branch: 'main', warnings: [], estimated: r.estimated, description: r.description, private: false }; },
+    async tree(ref, { at } = {}) {
+      const r = find(ref); if (at) { const f = ref.name === 'storefront' && STORE_AT[at]; if (!f) throw new SyncError(`HTTP 404: the demo has no tree at "${at}"`); return { files: f(), branch: at, warnings: [], estimated: true, description: '', private: false }; }
+      return { files: r.files(), branch: 'main', warnings: [], estimated: r.estimated, description: r.description, private: false }; },
     async stats(ref) {
       const prs = find(ref).prs().map((p) => ({ ...p, mine: p.author === 'you' }));
       return { open: prs.length, mine: prs.filter((p) => p.mine).length, needs: prs.filter((p) => needsReason(p)).length, viewer: 'you', capped: false };

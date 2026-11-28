@@ -6,7 +6,8 @@ import { buildLayout, WORLD } from './layout.js';
 import { planSpires, DIFF_COLORS, diffHeight } from './spires.js';
 import { ageDays, ageLift } from './filters.js';
 import { buildingFor, DEFAULT_STYLE, SHAPES, focusView } from './building.js';
-import { siteParts, frameParts } from './sites.js';
+import { siteParts, frameParts, staleParts } from './sites.js';
+import { forMaster, staleFiles } from './baseview.js';
 import { classifyChanges, anchorFor } from './changes.js';
 import { placeGhosts, ghostFiles } from './placement.js';
 
@@ -200,7 +201,7 @@ export function createScene(host, handlers = {}) {
   const unitBox = new THREE.BoxGeometry(1, 1, 1); unitBox.translate(0, 0.5, 0);
   const cone = new THREE.ConeGeometry(1, 1, 4, 1); cone.rotateY(Math.PI / 4); cone.translate(0, 0.5, 0);
   const solid = () => new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.12, emissive: 0x1a1a1a });
-  const glassMat = () => new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.0, transparent: true, opacity: 0.24, depthWrite: false });
+  const glassMat = () => new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.0, transparent: true, opacity: 0.24, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });   // glass wins every depth tie, so see-through shells never pop against what is under them
   const plateMesh = new Pool(scene, unitBox, new THREE.MeshStandardMaterial({ roughness: 0.95 }));
   const uDens = { value: DEFAULT_STYLE.density }, uTex = { value: 1 };
   const buildings = new Pool(scene, unitBox.clone(), windowMaterial(uDens, uTex), { cast: true, attrs: ['aWin', 'aWin2', 'aLit'] });
@@ -211,12 +212,15 @@ export function createScene(host, handlers = {}) {
   const caps = new Pool(scene, cone, solid(), { cast: true });
   const gBoxes = new Pool(scene, unitBox, glassMat());
   const gCaps = new Pool(scene, cone, glassMat());
+  gBoxes.mesh.renderOrder = 10; gCaps.mesh.renderOrder = 10;     // after every opaque pool and the plates: glass is always the top layer
   const pickables = () => [boxes.mesh, caps.mesh, gBoxes.mesh, gCaps.mesh, buildings.mesh];
 
   // ---- HTML/SVG overlay (labels, flags, poles, supply lines) ----
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:absolute;inset:0;overflow:hidden;pointer-events:none';
   host.appendChild(overlay);
+  const asideCap = document.createElement('div');          // the label above the column of flags that are not on the map
+  asideCap.className = 'bm-asidecap'; asideCap.textContent = 'NOT ON THE MAP'; asideCap.style.cssText = 'position:absolute;left:0;top:0;display:none;font:700 9px var(--display);letter-spacing:.18em;color:var(--dim);pointer-events:none'; overlay.appendChild(asideCap);
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('class', 'bm-svg'); svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none';
   overlay.appendChild(svg);
@@ -266,12 +270,12 @@ export function createScene(host, handlers = {}) {
   /**
    * The layout to show: the map with every tracked PR's new and moved-to files already in it (flagged `ghost`; they are drawn as empty
    * scaffold frames, not buildings). It depends only on which PRs are tracked, never on what is focused, filtered or hovered, so a file
-   * never moves because you looked at a different PR. Cached by the set of ghost files.
+   * never moves because you looked at a different PR. The one exception: the old place of a file main moved or deleted gets room (a ghost shell, and a trail to where the edit landed) only while its PR is focused. Cached by the set of ghost files.
    */
   function layoutFor(prs) {
     const base = S.baseLayout; if (!base) return base;
     const live = (prs || []).filter((p) => !p.ended && p.status !== 'merged' && p.status !== 'closed');
-    const extra = ghostFiles(classifyChanges(live, base.byPath), base.byPath);
+    const added = ghostFiles(classifyChanges(live, base.byPath), base.byPath), have = new Set(added.map((e) => e.path)), extra = [...added, ...staleFiles(live.filter((p) => p.id === S.opts.focusId), base.byPath).filter((e) => !have.has(e.path))];   // old places get room only while their PR is focused
     if (!extra.length) return base;
     const key = extra.map((e) => `${e.path}:${e.loc}:${e.complexity}:${e.kind}`).join(',');
     if (S.ghostKey === key && S.ghostLayout) return S.ghostLayout;
@@ -334,9 +338,20 @@ export function createScene(host, handlers = {}) {
   }
 
   // ---- diff layer ----
+  /**
+   * Each PR as the map it is drawn on needs it (web/baseview.js). On the latest-master map a PR's files are put where main has moved them
+   * and the old places are kept as ghosts. `aside` PRs (stacked, on another branch, or too far behind to read) are drawn as a flag at the
+   * side and nothing else. `fromBase`: the map IS the PR's own base, so its files are right as they are.
+   */
+  function prepare(prs, opts) {
+    const byPath = S.baseLayout?.byPath; if (!byPath) return prs;
+    const aside = opts.aside || null;
+    return prs.map((p) => (aside && aside.has(p.id) ? { ...p, aside: true, files: [], stale: [] } : opts.fromBase ? p : forMaster(p, byPath)));
+  }
   function setPRs(prs, opts = {}) {
     const next = { ...S.opts, ...opts };
-    const regrow = (next.focusId ?? null) !== (S.opts.focusId ?? null) || next.mode !== S.opts.mode || next.topper !== S.opts.topper;
+    const regrow = (next.focusId ?? null) !== (S.opts.focusId ?? null) || next.mode !== S.opts.mode || next.topper !== S.opts.topper || !!next.fromBase !== !!S.opts.fromBase;
+    prs = prepare(prs, next);
     S.prs = prs; S.opts = next;
     const L2 = layoutFor(prs); if (L2 && L2 !== S.layout) { S.layout = L2; restyle(); drawPlates(L2); }
     const gp = new Set((S.layout?.leaves || []).filter((l) => l.ghost).map((l) => l.path));          // new files that now have a leaf: drawn as sites, not as columns on a building
@@ -349,6 +364,7 @@ export function createScene(host, handlers = {}) {
     planSites(); planGhosts();
     S.touched = new Set(S.columns.filter((c) => !c.dimmed || !S.opts.focusId).map((c) => c.path));
     S.contested = new Set(S.columns.filter((c) => c.sharedWith > 0 && !c.dimmed).map((c) => c.path));
+    S.conflicts = new Set(S.columns.filter((c) => c.focused && c.conflict).map((c) => c.path));          // the focused PR's files that its target changed too: a quiet cue, only when focused
     refreshBuildings();
     S.growth = { t0: performance.now(), dur: regrow || !S.growth.active ? 520 : 280, active: true, p: 0 };
     syncFlags(); drawSpires(0);
@@ -387,6 +403,7 @@ export function createScene(host, handlers = {}) {
       case 'delPad': return _c.set(DIFF_COLORS.del).offsetHSL(0, -0.1, -0.2);
       case 'pad': return _c.copy(st).offsetHSL(0, -0.15, -0.22);
       case 'move': return _c.set(0xffd23f);
+      case 'ghostShell': return _c.set(0xcfd8e3);
       case 'movePad': return _c.set(0x8a7a1f);
       case 'tape': return _c.set(DIFF_COLORS.del);
       case 'hazard': return _c.set(DIFF_COLORS.del);
@@ -411,14 +428,22 @@ export function createScene(host, handlers = {}) {
       g.built = shell ? frameParts(shell, { tone: g.tone }) : null; g.top = g.built ? g.built.top : 0; byPath.set(r.path, g);
     }
     S.ghosts = [...byPath.values()];
+    // where a file the PR means to change used to be, before its target moved or deleted it: a ghost shell outlined in the PR's colour
+    const staleRows = prs.flatMap((p) => (p.stale || []).map((s) => ({ prId: p.id, path: s.path }))), staleLots = placeGhosts(L, staleRows, {}).lots, seenStale = new Set();
+    for (const p of prs) for (const s of p.stale || []) {
+      const lot = staleLots.get(`${p.id}|${s.path}`); if (!lot || seenStale.has(s.path) || byPath.has(s.path)) continue; seenStale.add(s.path);
+      const shell = S.styled.get(s.path)?.shell, g = { prId: p.id, path: s.path, kind: 'stale', add: s.add, del: s.del, lot, anchor: anchorFor(L, s.path), z0: 0, status: p.status, dimmed: !!focus && focus !== p.id, focused: focus === p.id, tone: 'stale' };
+      g.built = shell && g.focused ? staleParts(shell) : null; g.top = g.built ? g.built.top : 0; S.ghosts.push(g);   // the shell is for a close look: only the focused PR's
+      const home = s.to && L.byPath.get(s.to); if (home) S.moves.push({ stale: true, prId: p.id, status: p.status, lot, home, dimmed: g.dimmed });   // from far away: a line from the old place to where the edit landed
+    }
     for (const g of S.ghosts) if (g.kind === 'renamed' && g.fromExists) S.moves.push({ prId: g.prId, status: g.status, from: L.byPath.get(g.from), to: g.lot, z0: 0, top: g.top, dimmed: g.dimmed });
   }
   const ghostTone = (tone, st) => siteColor(tone, st);
   function pushGhosts(p) {
     for (const g of S.ghosts) {
-      if (!g.built) continue; const st = new THREE.Color(statusColor(g.status)), base = { prId: g.prId, path: g.path, lines: g.add + g.del, add: g.add, del: g.del, kind: 'add', n: g.add, ghost: true };
+      if (!g.built) continue; const st = new THREE.Color(statusColor(g.status)), base = { prId: g.prId, path: g.path, lines: g.add + g.del, add: g.add, del: g.del, kind: g.kind === 'stale' ? 'pr' : 'add', n: g.add, ghost: true };
       for (const q of g.built.parts) {
-        const bp = g.dimmed ? gBoxes : boxes, col = ghostTone(q.tone, st), z = g.z0 + (q.z - g.z0) * p;
+        const bp = g.dimmed || q.tone === 'ghostShell' ? gBoxes : boxes, col = ghostTone(q.tone, st), z = g.z0 + (q.z - g.z0) * p;
         if (q.diag) { const len = q.len * p; if (q.along === 'x') { _qa.setFromAxisAngle(AZ, q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(len, q.t, q.t), col, base, undefined, _qa); } else { _qa.setFromAxisAngle(AX, -q.angle); bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(q.t, q.t, len), col, base, undefined, _qa); } }
         else bp.push(_p.set(q.x - CX, z, q.y - CY), _s.set(q.w, Math.max(0.02, q.h * p), q.d), col, base);
       }
@@ -444,13 +469,21 @@ export function createScene(host, handlers = {}) {
   }
   // Amber frame around any roof that two or more PRs share. Static on purpose.
   function drawRims() {
-    rims.begin(S.contested.size * 4);
+    rims.begin((S.contested.size + (S.conflicts?.size || 0)) * 4);
     for (const path of S.contested) {
       const r = roofOf(S.layout.byPath.get(path)), t = 0.55, y = r.top - 0.3, x = r.cx - CX, z = r.cy - CY;
       rims.push(_p.set(x, y, z - r.h / 2 - t / 2), _s.set(r.w + t * 2, 0.75, t), _c.set(0xffffff), { path });
       rims.push(_p.set(x, y, z + r.h / 2 + t / 2), _s.set(r.w + t * 2, 0.75, t), _c, { path });
       rims.push(_p.set(x - r.w / 2 - t / 2, y, z), _s.set(t, 0.75, r.h), _c, { path });
       rims.push(_p.set(x + r.w / 2 + t / 2, y, z), _s.set(t, 0.75, r.h), _c, { path });
+    }
+    // the focused PR's files that main changed as well: a thin orange frame a little outside the amber one, so the two never share a plane
+    for (const path of S.conflicts || []) {
+      const r = roofOf(S.layout.byPath.get(path)), t = 0.5, o = 0.8, y = r.top - 0.3, x = r.cx - CX, z = r.cy - CY;
+      rims.push(_p.set(x, y, z - r.h / 2 - o - t / 2), _s.set(r.w + (o + t) * 2, 0.75, t), _c.set(0xff7a45), { path });
+      rims.push(_p.set(x, y, z + r.h / 2 + o + t / 2), _s.set(r.w + (o + t) * 2, 0.75, t), _c, { path });
+      rims.push(_p.set(x - r.w / 2 - o - t / 2, y, z), _s.set(t, 0.75, r.h + o * 2), _c, { path });
+      rims.push(_p.set(x + r.w / 2 + o + t / 2, y, z), _s.set(t, 0.75, r.h + o * 2), _c, { path });
     }
     rims.end();
   }
@@ -460,7 +493,7 @@ export function createScene(host, handlers = {}) {
     const sites = new Set(S.sites.map((s) => s.c)), loose = S.columns.filter((c) => !sites.has(c));   // columns drawn as toppers
     const solidCols = loose.filter((c) => !c.dimmed), glassCols = loose.filter((c) => c.dimmed);
     let sSolid = 0, sGlass = 0; for (const s of S.sites) for (const q of s.parts) { if (glassPart(s.c, q)) sGlass++; else sSolid++; }
-    let gSolid = 0, gGlass = 0; for (const g of S.ghosts) for (const q of g.built?.parts || []) { if (g.dimmed) gGlass++; else gSolid++; }
+    let gSolid = 0, gGlass = 0; for (const g of S.ghosts) for (const q of g.built?.parts || []) { if (g.dimmed || q.tone === 'ghostShell') gGlass++; else gSolid++; }
     boxes.begin(solidCols.reduce((a, c) => a + c.parts.length, 0) + sSolid + gSolid); caps.begin(solidCols.length);
     gBoxes.begin(glassCols.reduce((a, c) => a + c.parts.length, 0) + sGlass + gGlass); gCaps.begin(glassCols.length);
     pushSites(p); pushGhosts(p);
@@ -481,9 +514,10 @@ export function createScene(host, handlers = {}) {
 
   // ---- flags (PR banners, owned by the UI, positioned here) ----
   function syncFlags() {
-    const want = new Map();
+    const want = new Map(); let asideN = 0;
     for (const pr of S.prs) {
       if (S.opts.visible && !S.opts.visible.has(pr.id)) continue;
+      if (pr.aside) { want.set(pr.id, { pr, x: -14, y: 14 + asideN++ * 30, top: 8 }); continue; }          // too different to draw: its flag waits at the side of the map
       const cols = [...S.columns.filter((c) => c.prId === pr.id), ...S.ghosts.filter((g) => g.prId === pr.id).map((g) => ({ x: g.lot ? g.lot.x : g.anchor.x, y: g.lot ? g.lot.y : g.anchor.y, z0: g.z0, total: 0, siteTop: g.top, w: 4, d: 4, ghost: true }))];   // a PR that only adds files still stands somewhere: its new lot, or the district they belong in
       if (!cols.length) continue;
       const x = cols.reduce((a, c) => a + c.x, 0) / cols.length, y = cols.reduce((a, c) => a + c.y, 0) / cols.length;
@@ -552,8 +586,17 @@ export function createScene(host, handlers = {}) {
 
     // flags with simple overlap avoidance
     const placed = [];
-    const list = [...S.flags.values()].map((f) => ({ f, a: project(f.x, f.y, f.top) })).filter((q) => q.a.vis).sort((a, b) => a.a.sy - b.a.sy);
     const selected = S.opts.focusId;
+    // flags of PRs that cannot be drawn on this map wait in a column at the right edge, in screen space: they are tracked, they just are not on the map
+    const side = [...S.flags.values()].filter((f) => f.pr.aside), rows = Math.max(1, Math.floor((S.size.h - 100 - 280) / (FLAG_H + 6)));
+    side.forEach((f, i) => {
+      if (!S.ui.flags) { f.el.style.display = 'none'; return; }
+      f.el.classList.add('expanded'); f.el.classList.toggle('dim', !!selected && f.pr.id !== selected);
+      const x = S.size.w - FLAG_W.expanded - 26 - Math.floor(i / rows) * (FLAG_W.expanded + 8), y = 128 + (i % rows) * (FLAG_H + 6);
+      f.el.style.display = 'flex'; f.el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`; f.el.style.zIndex = f.pr.id === selected ? 5 : 1;
+    });
+    asideCap.style.display = side.length && S.ui.flags ? 'block' : 'none'; if (side.length) asideCap.style.transform = `translate(${(S.size.w - FLAG_W.expanded - 26).toFixed(1)}px,108px)`;
+    const list = [...S.flags.values()].filter((f) => !f.pr.aside).map((f) => ({ f, a: project(f.x, f.y, f.top) })).filter((q) => q.a.vis).sort((a, b) => a.a.sy - b.a.sy);
     const near = camera.position.distanceTo(controls.target) < 260 * rangeScale(S.opts.view);
     const shown = new Set();
     for (const q of list) {
@@ -568,7 +611,7 @@ export function createScene(host, handlers = {}) {
       f.el.style.zIndex = f.pr.id === selected ? 5 : 1;
       f.sx = x + FLAG_W.collapsed / 2; f.sy = y + FLAG_H; shown.add(f);
     }
-    for (const f of S.flags.values()) if (!shown.has(f)) f.el.style.display = 'none';
+    for (const f of S.flags.values()) if (!shown.has(f) && !f.pr.aside) f.el.style.display = 'none';
 
     // poles: ground anchor to flag
     const keep = new Set();
@@ -604,11 +647,13 @@ export function createScene(host, handlers = {}) {
     }
     // a file that moves: an amber dashed arc from its old building to its new lot
     S.moves.forEach((mv, i) => {
-      const a = project(mv.from.mx, mv.from.my, (S.styled.get(mv.from.path)?.roof.z ?? mv.from.height) + 1), b = project(mv.to.x, mv.to.y, mv.top + 1);
+      const a = mv.stale ? project(mv.lot.x, mv.lot.y, 0.5) : project(mv.from.mx, mv.from.my, (S.styled.get(mv.from.path)?.roof.z ?? mv.from.height) + 1);
+      const b = mv.stale ? project(mv.home.mx, mv.home.my, (S.styled.get(mv.home.path)?.roof.z ?? mv.home.height) + 1) : project(mv.to.x, mv.to.y, mv.top + 1);
       let el = moveArcs[i]; if (!el) { el = svgEl('path', 'bm-line bm-move'); gLines.appendChild(el); moveArcs[i] = el; }
+      el.setAttribute('class', mv.stale ? 'bm-line bm-stale' : 'bm-line bm-move');
       if (!(a.vis && b.vis)) { el.style.display = 'none'; return; }
       el.setAttribute('d', `M${a.sx.toFixed(1)},${a.sy.toFixed(1)} Q${((a.sx + b.sx) / 2).toFixed(1)},${(Math.min(a.sy, b.sy) - 60 - Math.hypot(a.sx - b.sx, a.sy - b.sy) * 0.15).toFixed(1)} ${b.sx.toFixed(1)},${b.sy.toFixed(1)}`);
-      el.setAttribute('stroke', '#ffd23f'); el.style.display = ''; el.style.opacity = mv.dimmed ? '0.3' : '1';
+      el.setAttribute('stroke', mv.stale ? statusColor(mv.status) : '#ffd23f'); el.style.display = ''; el.style.opacity = mv.dimmed ? '0.3' : '1';
     });
     for (let i = S.moves.length; i < moveArcs.length; i++) moveArcs[i].style.display = 'none';
     for (let i = li; i < lines.length; i++) lines[i].style.display = 'none';
@@ -711,7 +756,7 @@ export function createScene(host, handlers = {}) {
     setUI(u) { const was = S.ui.watched; S.ui = { ...S.ui, ...u }; if (S.ui.watched !== was) drawWatch(); },
     setWatched(paths) { S.watched = new Set(paths || []); drawWatch(); },
     setHighlight(paths) { S.highlight = new Set(paths || []); refreshBuildings(); },
-    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov, sites: S.sites.length, ghosts: S.ghosts.length, placed: S.ghosts.filter((g) => g.lot).length, moves: S.moves.length }),
+    info: () => ({ columns: S.columns.length, buildings: S.layout?.leaves.length || 0, flags: S.flags.size, view: S.opts.view, contested: S.contested.size, watched: S.watchedShown || 0, fov: camera.fov, sites: S.sites.length, ghosts: S.ghosts.length, placed: S.ghosts.filter((g) => g.lot).length, stale: S.ghosts.filter((g) => g.kind === 'stale').length, aside: S.prs.filter((p) => p.aside).length, conflicts: S.conflicts?.size || 0, moves: S.moves.length, shells: S.ghosts.filter((g) => g.kind === 'stale' && g.built).length }),
     layout: () => S.layout,
     /** Hash identity of one file: its index code, silhouette and window style. */
     buildingInfo(path) { const b = S.styled.get(path); return b ? { code: b.t.code, shape: S.style.mode === 'full' ? SHAPES[b.t.shape] : 'block', parts: b.parts.length } : null; },

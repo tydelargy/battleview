@@ -260,3 +260,23 @@ function crates(col, slot, heightOf) {
   }
   return { parts, top: base + Math.max(na, nd, 1) * FLOOR_H };
 }
+
+/**
+ * The ghost of a file's old place: where a PR means to change a file that main has since moved or deleted. A see-through shell in the
+ * building's own shape with an outline in the PR's colour (rings at the foot and the crown, posts between), so it reads as "something
+ * stood here" from far away and never as a building you can read. Rings stand clear of every tier of the shell, posts start above the
+ * foot ring and stop below the crown ring (CLAUDE.md, Layering).
+ */
+export function staleParts(shell) {
+  const { rect } = shell, H = Math.max(FLOOR_H, shell.H ?? shell.h), parts = [];
+  const tiers = shell.profile && shell.profile.length ? shell.profile : [{ x: rect.x, y: rect.y, w: rect.w, d: rect.h, z: 0, h: H }];
+  tiers.forEach((p, i) => { const o = 0.25 + 0.14 * i; parts.push({ x: p.x + p.w / 2, y: p.y + p.d / 2, w: p.w + 2 * o, d: p.d + 2 * o, z: p.z + 0.1 * i, h: Math.max(0.1, p.h - 0.1 * i), tone: 'ghostShell', ground: true }); });
+  const m = 0.25 + 0.14 * tiers.length + 0.3, t = clamp(Math.max(rect.w, rect.h) * 0.02, 0.4, 1.1), rh = Math.min(0.37, H * 0.2);   // 0.37: ground plates top out at multiples of 0.25, so a foot ring never ends on a plate's top
+  const X0 = rect.x - m, Y0 = rect.y - m, W = rect.w + 2 * m, D = rect.h + 2 * m;
+  const ring = (z) => parts.push(
+    { x: X0 + W / 2, y: Y0 - t / 2, w: W + 2 * t, d: t, z, h: rh, tone: 'status', ground: true }, { x: X0 + W / 2, y: Y0 + D + t / 2, w: W + 2 * t, d: t, z, h: rh, tone: 'status', ground: true },
+    { x: X0 - t / 2, y: Y0 + D / 2, w: t, d: D, z, h: rh, tone: 'status', ground: true }, { x: X0 + W + t / 2, y: Y0 + D / 2, w: t, d: D, z, h: rh, tone: 'status', ground: true });
+  ring(0); ring(H - rh);
+  if (H - 2 * rh > 0.3) for (const [px, py] of [[X0 - t / 2, Y0 - t / 2], [X0 + W + t / 2, Y0 - t / 2], [X0 - t / 2, Y0 + D + t / 2], [X0 + W + t / 2, Y0 + D + t / 2]]) parts.push({ x: px, y: py, w: t, d: t, z: rh, h: H - 2 * rh, tone: 'status', ground: true });
+  return { parts, top: H };
+}

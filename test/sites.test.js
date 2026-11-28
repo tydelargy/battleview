@@ -151,7 +151,7 @@ test('layering: belts, rails, scaffolding, crates, floors and cranes never put t
 });
 
 // ---- files that go, move and come: condemned buildings, amber move tape, construction sites ----
-import { condemnedParts, frameParts } from '../web/sites.js';
+import { condemnedParts, frameParts, staleParts } from '../web/sites.js';
 test('a condemned building: a see-through red shell in its own shape, an X on the roof and on every wall, rubble beside it; no rings; layered', () => {
   const tiersOf = (shape) => silhouette(shape, { x: 10, y: 10, w: 30, h: 18 }, 24, 0.4);
   for (const shape of [0, 1, 2, 3, 4, 5, 6]) {
@@ -211,4 +211,18 @@ test('planSpires: a removed file is a column on its building (flagged), a move p
   const cols = planSpires({ byPath: layout.byPath, prs });
   assert.deepEqual(cols.map((c) => [c.path, c.change]).sort((a, b) => (a[0] < b[0] ? -1 : 1)), [[paths[0], 'removed'], [paths[1], 'moved-out'], [paths[2], 'modified']].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
   assert.equal(cols.find((c) => c.path === paths[1]).movedTo, 'moved/to/here.ts');
+});
+
+test('the ghost of a file\'s old place: a see-through shell in the building\'s own shape, outlined in the PR\'s colour; layered for every shape', () => {
+  for (const shape of [0, 1, 2, 3, 4, 5, 6]) {
+    const sil = silhouette(shape, { x: 10, y: 10, w: 30, h: 18 }, 24, 0.4), shell = { rect: { x: 10, y: 10, w: 30, h: 18 }, h: sil.shell, H: 24, profile: sil.parts, roof: sil.roof };
+    const { parts, top } = staleParts(shell), body = parts.filter((p) => p.tone === 'ghostShell'), line = parts.filter((p) => p.tone === 'status');
+    assert.equal(body.length, sil.parts.length, `one see-through box per tier (shape ${shape})`); assert.equal(top, 24); assert.ok(parts.every((p) => p.tone === 'ghostShell' || p.tone === 'status'), 'nothing else: no tape, no scaffold, no rubble');
+    assert.ok(line.length >= 8 && line.length <= 12, 'two rings and four posts'); assert.deepEqual(coplanarOverlaps(parts), [], `layering (shape ${shape})`);
+    assert.ok(Math.max(...parts.map((p) => p.z + p.h)) <= 24 + 1e-9, 'never taller than the building would be');
+    const xs = line.flatMap((p) => [p.x - p.w / 2, p.x + p.w / 2]); assert.ok(Math.min(...xs) < 10 && Math.max(...xs) > 40, 'the outline stands outside the footprint');
+    assert.ok(parts.every((p) => p.w > 0 && p.d > 0 && p.h > 0 && p.z >= 0), 'sound boxes');
+  }
+  const plain = staleParts({ rect: { x: 0, y: 0, w: 4, h: 3 }, h: 3 }); assert.equal(plain.parts.filter((p) => p.tone === 'ghostShell').length, 1); assert.deepEqual(coplanarOverlaps(plain.parts), [], 'even a tiny, low one');
+  assert.ok(plain.parts.every((p) => Number.isFinite(p.x + p.y + p.z + p.w + p.d + p.h)));
 });

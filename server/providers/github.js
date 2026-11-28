@@ -11,7 +11,7 @@ import { needsReason } from '../snapshot.js';
 export class SyncError extends Error {}
 
 export const FIELDS = ['number', 'title', 'headRefName', 'headRefOid', 'author', 'isDraft', 'reviewDecision', 'statusCheckRollup',
-  'createdAt', 'updatedAt', 'url', 'files', 'reviewRequests', 'latestReviews', 'state', 'mergedAt', 'closedAt'];
+  'createdAt', 'updatedAt', 'url', 'files', 'reviewRequests', 'latestReviews', 'state', 'mergedAt', 'closedAt', 'baseRefName', 'mergeable', 'mergeStateStatus'];
 
 const DETAIL_LIMIT = 100, CHUNK = 20;   // timelines are read twenty PRs to a request; cap how many so a huge repo cannot make a sync crawl
 const FAILING_CONCLUSIONS = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ACTION_REQUIRED']);
@@ -104,6 +104,7 @@ export function normalisePR(raw, { viewer = null, waitingSince = null } = {}) {
   const author = raw.author?.login || 'unknown';
   return {
     id: `#${raw.number}`, number: raw.number, title: raw.title || `#${raw.number}`, branch: raw.headRefName || '', author, url: raw.url || null,
+    ...(raw.baseRefName ? { base: { ref: String(raw.baseRefName), mergeable: raw.mergeable || 'UNKNOWN', mergeState: raw.mergeStateStatus || 'UNKNOWN' } } : {}),   // what it targets, and whether GitHub can merge it as it stands
     status: prStatus(raw), createdAt: raw.createdAt || null, updatedAt: raw.updatedAt || null, headSha: raw.headRefOid || null, waitingSince,
     ...(viewer ? { mine: author.toLowerCase() === viewer.toLowerCase() } : {}),
     files: (raw.files || []).map((f) => ({ path: f.path, add: f.additions || 0, del: f.deletions || 0 })),
@@ -188,7 +189,7 @@ export async function fetchGithub({ repo = null, host = null, limit = 500, ended
   }
   const seen = new Set(open.map((p) => p.number));
   const prs = [...open, ...ended.filter((p) => !seen.has(p.number))].map((p) => normalisePR(p, { viewer, waitingSince: waiting.get(p.number) ?? null }));
-  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec })); }
+  if (changes) { warnings.push(...await addFileChanges(prs, { repo, host, gh, exec }), ...await addBehind(prs, { repo, host, gh, exec }), ...await addSince(prs, { repo, host, gh, exec })); }
   return { prs, viewer, warnings, counts: { open: open.length, ended: prs.length - open.length } };
 }
 
@@ -240,6 +241,75 @@ export async function addFileChanges(prs, { repo, host = null, gh = 'gh', exec =
   return warnings;
 }
 
+// ---- how far behind its target each PR is ----
+// GraphQL can compare a branch with a commit, so twenty PRs are one request. Names go in as variables (a branch name is outside text),
+// the commit is a hex sha from gh. A PR whose target branch is gone answers null and just has no count.
+const SHA = /^[0-9a-f]{7,64}$/i;
+export const behindQuery = (n) => `query($owner: String!, $name: String!${Array.from({ length: n }, (_, i) => `, $b${i}: String!, $h${i}: String!`).join('')}) { repository(owner: $owner, name: $name) {
+${Array.from({ length: n }, (_, i) => `  c${i}: ref(qualifiedName: $b${i}) { compare(headRef: $h${i}) { behindBy } }`).join('\n')}
+} }`;
+/** The answer -> an array of how far behind each asked-for PR is (a whole number) or null. Pure. */
+export function behindFromGraphql(data, n) {
+  return Array.from({ length: n }, (_, i) => { const v = data?.[`c${i}`]?.compare?.behindBy; return Number.isInteger(v) && v >= 0 ? v : null; });
+}
+/** Add `base.behind` to the open PRs. Trouble only costs the count, never the feed. */
+export async function addBehind(prs, { repo, host = null, gh = 'gh', exec = defaultExec, limit = DETAIL_LIMIT } = {}) {
+  const warnings = [], env = host ? { GH_HOST: host } : {}, open = prs.filter((p) => p.base?.ref && SHA.test(p.headSha || '') && !['merged', 'closed'].includes(p.status));
+  const looked = open.slice(0, limit); if (open.length > looked.length) warnings.push(`how far behind they are was read for ${looked.length} of ${open.length} PRs`);
+  if (!looked.length) return warnings;
+  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { return [...warnings, `could not read how far PRs are behind: ${e.message.split('\n')[0]}`]; }
+  let failed = 0;
+  for (let i = 0; i < looked.length; i += CHUNK) {
+    const chunk = looked.slice(i, i + CHUNK), args = ['api', 'graphql', '-f', `query=${behindQuery(chunk.length)}`, '-f', `owner=${owner}`, '-f', `name=${name}`];
+    chunk.forEach((p, j) => args.push('-f', `b${j}=refs/heads/${p.base.ref}`, '-f', `h${j}=${p.headSha}`));
+    try {
+      const counts = behindFromGraphql(JSON.parse(await exec(gh, args, { env }))?.data?.repository, chunk.length);
+      chunk.forEach((p, j) => { if (counts[j] != null) p.base.behind = counts[j]; });
+    } catch { failed += chunk.length; }
+  }
+  if (failed) warnings.push(`could not read how far ${failed} PR${failed > 1 ? 's' : ''} are behind their target`);
+  return warnings;
+}
+
+// ---- what the target did to each file since the PR branched ----
+// REST compare, from the PR's head to its target, is the diff of the target's own work since the two last agreed: a file it removed,
+// moved (previous_filename) or changed. It lists at most 300 files, so a long-running target can cut it short: that is recorded
+// (`base.sinceCut`), and a file with no entry then means "not seen", not "untouched". One request per PR that is behind, a few at a time.
+const SINCE_LIMIT = 40, SINCE_PARALLEL = 4, SINCE_FILES = 300;
+/** Compare's files -> Map(path -> {change: 'removed' | 'moved' | 'modified' | 'added', to?}) for the paths asked about. Pure. */
+export function sinceFromCompare(files, paths) {
+  const want = new Set(paths), out = new Map();
+  for (const f of Array.isArray(files) ? files : []) {
+    if (!f || typeof f.filename !== 'string') continue;
+    if (f.previous_filename && want.has(f.previous_filename)) out.set(f.previous_filename, { change: 'moved', to: f.filename });   // the file the PR means is now called something else
+    else if (want.has(f.filename)) out.set(f.filename, { change: f.status === 'removed' ? 'removed' : f.status === 'added' ? 'added' : 'modified' });
+  }
+  return out;
+}
+/** Add `since` to each file of the PRs that are behind, and `base.sinceCut` when compare may have left files out. Trouble only costs detail. */
+export async function addSince(prs, { repo, host = null, gh = 'gh', exec = defaultExec, limit = SINCE_LIMIT } = {}) {
+  const warnings = [], env = host ? { GH_HOST: host } : {}, behind = prs.filter((p) => p.base?.behind > 0 && SHA.test(p.headSha || '') && p.files?.length && !['merged', 'closed'].includes(p.status));
+  const looked = behind.slice(0, limit); if (behind.length > looked.length) warnings.push(`what the target changed since the branch point was read for ${looked.length} of ${behind.length} PRs that are behind`);
+  // a PR that is behind and whose list we did not read (past the cap, a failed call, no commit to ask about) is marked: the map must not guess for it
+  const read = new Set(), unknown = () => { for (const p of prs) if (p.base?.behind > 0 && p.files?.length && !['merged', 'closed'].includes(p.status) && !read.has(p)) p.base.sinceUnknown = true; };
+  if (!looked.length) { unknown(); return warnings; }
+  let owner, name; try { ({ owner, name } = await repoParts(repo, { exec, gh, env })); } catch (e) { unknown(); return [...warnings, `could not read what targets changed: ${e.message.split('\n')[0]}`]; }
+  let failed = 0, next = 0;
+  const one = async (p) => {
+    const text = await exec(gh, ['api', `repos/${owner}/${name}/compare/${p.headSha}...${encodeURIComponent(p.base.ref)}`, '--jq', '{mergeBase: .merge_base_commit.sha, files: [.files[]? | {filename, status, previous_filename}]}'], { env });
+    const out = JSON.parse(text), files = out?.files; if (!Array.isArray(files)) throw new SyncError('no files in the answer');
+    if (SHA.test(out.mergeBase || '')) p.base.mergeBase = out.mergeBase;                // where the PR and its target last agreed: the tree to look at to see the PR as its author did
+    const since = sinceFromCompare(files, p.files.map((f) => f.from || f.path));
+    for (const f of p.files) { const s = since.get(f.from || f.path); if (s) f.since = s; }
+    if (files.length >= SINCE_FILES) p.base.sinceCut = true;
+    read.add(p);
+  };
+  await Promise.all(Array.from({ length: Math.min(SINCE_PARALLEL, looked.length) }, async () => { while (next < looked.length) { const p = looked[next++]; try { await one(p); } catch { failed++; } } }));
+  unknown();
+  if (failed) warnings.push(`could not read what the target changed for ${failed} PR${failed > 1 ? 's' : ''}`);
+  return warnings;
+}
+
 export const github = { name: 'github', fetch: fetchGithub };
 
 // ---- a repo with no clone: its shape and its numbers, straight from the remote ----------------------------------------
@@ -263,16 +333,20 @@ export const repoKey = (r) => `${r.host && r.host !== 'github.com' ? r.host + '/
 const BYTES_PER_LINE = 38, LINES_PER_BRANCH = 9;
 export const estimateFile = (size) => { const loc = Math.max(1, Math.round(size / BYTES_PER_LINE)); return { loc, complexity: Math.round(loc / LINES_PER_BRANCH) }; };
 
+/** A branch name or a commit sha, safe to put in a URL path (encoded) and never an option for gh: no control characters, no `..`, not empty or huge. */
+export const isTreeish = (s) => typeof s === 'string' && s.length > 0 && s.length <= 250 && !/[\0-\x1f\x7f\s~^:?*[\\]/.test(s) && !s.includes('..') && !s.startsWith('-') && !s.endsWith('/') && !s.endsWith('.lock');
+
 /**
- * The file list of a repo's default branch without cloning it: two `gh api` calls (the default branch, then its whole
+ * The file list of a repo's default branch (or, with `at`, another branch or a commit) without cloning it: two `gh api` calls (the default branch, then its whole
  * tree). Sizes are estimates (see above). A tree GitHub had to cut short is reported as a warning, not an error.
  */
-export async function fetchRepoTree({ repo, host = null, gh = 'gh', exec = defaultExec, maxFiles = 6000, maxBytes = 1_000_000 } = {}) {
+export async function fetchRepoTree({ repo, host = null, at = null, gh = 'gh', exec = defaultExec, maxFiles = 6000, maxBytes = 1_000_000 } = {}) {
   const ref = typeof repo === 'string' ? parseRepoRef(repo) : repo;
   if (!ref || !isSafeName(ref.owner) || !isSafeName(ref.name)) throw new SyncError(`cannot read owner and name from "${repo}"`);
   const h = host || ref.host, env = h && h !== 'github.com' ? { GH_HOST: h } : {}, base = `repos/${ref.owner}/${ref.name}`;
-  const info = JSON.parse(await exec(gh, ['api', base, '--jq', '{default_branch, private, description}'], { env }) || '{}');
-  const branch = info.default_branch || 'HEAD';
+  if (at != null && !isTreeish(at)) throw new SyncError('that is not a branch name or a commit');
+  const info = at ? {} : JSON.parse(await exec(gh, ['api', base, '--jq', '{default_branch, private, description}'], { env }) || '{}');   // `at`: the tree as it stood on another branch or at a commit; nothing else about the repo is needed
+  const branch = at || info.default_branch || 'HEAD';
   const out = JSON.parse(await exec(gh, ['api', `${base}/git/trees/${encodeURIComponent(branch)}?recursive=1`], { env }) || '{}');
   if (!Array.isArray(out.tree)) throw new SyncError('gh returned no file tree');
   const warnings = [];
